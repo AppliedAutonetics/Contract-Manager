@@ -1,0 +1,142 @@
+{% extends 'base.html' %}
+{% block title %}Compare Revisions — {{ contract.title }}{% endblock %}
+{% block page_title %}Compare Revisions{% endblock %}
+{% block page_subtitle %}<div class="topbar-subtitle">{{ contract.title }} · {{ contract.contract_number }}</div>{% endblock %}
+
+{% block head %}
+<style>
+  .diff-wrap { overflow-x: auto; }
+  .diff-wrap table { font-size: 12px; min-width: 700px; }
+  .diff-wrap td, .diff-wrap th { padding: 2px 8px; white-space: pre-wrap; word-break: break-word; }
+  .diff_add { background: #ecfdf5 !important; }
+  .diff_chg { background: #fffbeb !important; }
+  .diff_sub { background: #fef2f2 !important; }
+  span.diff_add { background: #a7f3d0; }
+  span.diff_chg { background: #fde68a; }
+  span.diff_sub { background: #fecaca; }
+  .diff_header { background: var(--gray-100) !important; color: var(--gray-500); }
+  table.diff { border-collapse: collapse; width: 100%; }
+  table.diff td, table.diff th { border: 1px solid var(--gray-200); }
+</style>
+{% endblock %}
+
+{% block topbar_actions %}
+  <a href="{{ url_for('contracts_detail', contract_id=contract.id) }}" class="btn btn-secondary">← Back to Contract</a>
+  <a href="{{ url_for('revisions_new', contract_id=contract.id) }}" class="btn btn-primary">+ Add Revision</a>
+{% endblock %}
+
+{% block content %}
+<!-- Selector -->
+<div class="card mb-4">
+  <div class="card-body" style="padding:16px 24px">
+    <form id="compare-form" method="GET" action="{{ url_for('contracts_compare', contract_id=contract.id) }}" class="flex items-center gap-4 flex-wrap">
+      <div style="display:flex;align-items:center;gap:10px;flex:1">
+        <label class="form-label" style="margin:0;white-space:nowrap">Compare</label>
+        <select name="rev1" class="form-control">
+          {% for r in revisions %}
+          <option value="{{ r.id }}" {% if r.id == rev1.id %}selected{% endif %}>
+            v{{ r.version_number }} — {{ r.created_at.strftime('%b %d, %Y') }} · {{ r.changes_summary[:30] if r.changes_summary else 'No summary' }}
+          </option>
+          {% endfor %}
+        </select>
+        <span style="color:var(--gray-400);font-weight:600;white-space:nowrap">vs</span>
+        <select name="rev2" class="form-control">
+          {% for r in revisions %}
+          <option value="{{ r.id }}" {% if r.id == rev2.id %}selected{% endif %}>
+            v{{ r.version_number }} — {{ r.created_at.strftime('%b %d, %Y') }} · {{ r.changes_summary[:30] if r.changes_summary else 'No summary' }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary">Compare</button>
+    </form>
+  </div>
+</div>
+
+<!-- Diff Stats -->
+<div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:20px">
+  <div class="stat-card success">
+    <div class="stat-label">Lines Added</div>
+    <div class="stat-value" style="color:var(--success)">+{{ added }}</div>
+    <div class="stat-sub">in v{{ rev2.version_number }}</div>
+  </div>
+  <div class="stat-card danger">
+    <div class="stat-label">Lines Removed</div>
+    <div class="stat-value" style="color:var(--danger)">-{{ removed }}</div>
+    <div class="stat-sub">from v{{ rev1.version_number }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Net Change</div>
+    <div class="stat-value">{{ added - removed }}</div>
+    <div class="stat-sub">lines</div>
+  </div>
+</div>
+
+<!-- Revision metadata -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">v{{ rev1.version_number }}</span>
+      {% if rev1.is_finalized %}<span class="badge badge-final">✓ FINAL</span>{% endif %}
+    </div>
+    <div class="card-body">
+      <div class="meta-label">Created</div>
+      <div class="text-sm mb-4">{{ rev1.created_at.strftime('%B %d, %Y at %H:%M UTC') }} by {{ rev1.creator.full_name }}</div>
+      {% if rev1.changes_summary %}
+      <div class="meta-label">Summary</div>
+      <div class="text-sm">{{ rev1.changes_summary }}</div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">v{{ rev2.version_number }}</span>
+      {% if rev2.is_finalized %}<span class="badge badge-final">✓ FINAL</span>{% endif %}
+    </div>
+    <div class="card-body">
+      <div class="meta-label">Created</div>
+      <div class="text-sm mb-4">{{ rev2.created_at.strftime('%B %d, %Y at %H:%M UTC') }} by {{ rev2.creator.full_name }}</div>
+      {% if rev2.changes_summary %}
+      <div class="meta-label">Summary</div>
+      <div class="text-sm">{{ rev2.changes_summary }}</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Diff View -->
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">Document Diff</span>
+    <span class="text-sm text-muted">
+      <span style="background:#ecfdf5;padding:2px 8px;border-radius:4px;color:#065f46">+ Added</span>
+      <span style="background:#fef2f2;padding:2px 8px;border-radius:4px;color:#991b1b;margin-left:6px">- Removed</span>
+      <span style="background:#fffbeb;padding:2px 8px;border-radius:4px;color:#92400e;margin-left:6px">≈ Changed</span>
+    </span>
+  </div>
+  <div class="card-body" style="padding:0">
+    <div class="diff-wrap">
+      {{ diff_html | safe }}
+    </div>
+  </div>
+</div>
+
+<!-- Finalize Action -->
+{% if not rev2.is_finalized and contract.status != 'finalized' %}
+<div class="card mt-4" style="border-left:4px solid var(--success)">
+  <div class="card-body" style="display:flex;align-items:center;gap:16px">
+    <div style="flex:1">
+      <div class="font-semibold">Ready to finalize?</div>
+      <div class="text-sm text-muted">Mark v{{ rev2.version_number }} as the official final version of this contract.</div>
+    </div>
+    <form method="POST" action="{{ url_for('contracts_finalize', contract_id=contract.id) }}" style="display:inline">
+      <input type="hidden" name="revision_id" value="{{ rev2.id }}">
+      <button type="submit" class="btn btn-success" data-confirm="Finalize v{{ rev2.version_number }} as the official version?">
+        ✓ Finalize v{{ rev2.version_number }}
+      </button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

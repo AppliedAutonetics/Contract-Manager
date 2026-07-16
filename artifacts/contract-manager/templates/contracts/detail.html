@@ -1,0 +1,248 @@
+{% extends 'base.html' %}
+{% block title %}{{ contract.title }}{% endblock %}
+{% block page_title %}{{ contract.title }}{% endblock %}
+{% block page_subtitle %}<div class="topbar-subtitle">{{ contract.contract_number }}</div>{% endblock %}
+
+{% block topbar_actions %}
+  <a href="{{ url_for('contracts_list') }}" class="btn btn-secondary">← Contracts</a>
+  <a href="{{ url_for('contracts_edit', contract_id=contract.id) }}" class="btn btn-secondary">Edit</a>
+  <a href="{{ url_for('contracts_pdf', contract_id=contract.id) }}" class="btn btn-secondary" title="Download PDF">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    PDF
+  </a>
+  <a href="{{ url_for('revisions_new', contract_id=contract.id) }}" class="btn btn-primary">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    Add Revision
+  </a>
+{% endblock %}
+
+{% block content %}
+<div class="detail-layout">
+  <!-- Left: Content -->
+  <div>
+
+    <!-- Status Banner -->
+    {% if contract.status == 'finalized' %}
+    <div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:var(--radius);padding:12px 18px;margin-bottom:20px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:20px">✅</span>
+      <div>
+        <div style="font-weight:700;color:#065f46">Contract Finalized</div>
+        <div style="font-size:13px;color:#059669">{{ contract.finalized_at.strftime('%B %d, %Y at %H:%M UTC') if contract.finalized_at }}</div>
+      </div>
+    </div>
+    {% elif contract.status == 'in_review' %}
+    <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:var(--radius);padding:12px 18px;margin-bottom:20px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:20px">🔍</span>
+      <div style="flex:1">
+        <div style="font-weight:700;color:#92400e">Under Review</div>
+        <div style="font-size:13px;color:#b45309">Awaiting approval. {{ contract.revision_count }} revision{% if contract.revision_count != 1 %}s{% endif %} uploaded.</div>
+      </div>
+      <form method="POST" action="{{ url_for('contracts_status', contract_id=contract.id) }}" style="display:inline">
+        <input type="hidden" name="status" value="approved">
+        <button type="submit" class="btn btn-success btn-sm">Mark Approved</button>
+      </form>
+    </div>
+    {% endif %}
+
+    <!-- Latest Content -->
+    <div class="card mb-4">
+      <div class="card-header">
+        <span class="card-title">Contract Content</span>
+        {% if contract.latest_revision %}
+        <span class="badge badge-version">v{{ contract.latest_revision.version_number }}</span>
+        {% if contract.latest_revision.is_finalized %}
+        <span class="badge badge-final">✓ Final</span>
+        {% endif %}
+        {% endif %}
+      </div>
+      {% if contract.latest_revision %}
+      <div class="card-body">
+        <div class="contract-text">{{ contract.latest_revision.content }}</div>
+      </div>
+      {% else %}
+      <div class="empty-state" style="padding:40px">
+        <div class="empty-icon">📝</div>
+        <div class="empty-title">No content yet</div>
+        <div class="empty-sub">Add the first revision to get started</div>
+        <a href="{{ url_for('revisions_new', contract_id=contract.id) }}" class="btn btn-primary">Add Revision</a>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Revisions -->
+    <div class="card mb-4">
+      <div class="card-header">
+        <span class="card-title">Revision History</span>
+        <div class="flex gap-2">
+          {% if contract.revision_count >= 2 %}
+          <a href="{{ url_for('contracts_compare', contract_id=contract.id) }}" class="btn btn-secondary btn-sm">Compare Revisions</a>
+          {% endif %}
+          <a href="{{ url_for('revisions_new', contract_id=contract.id) }}" class="btn btn-ghost btn-sm">+ Add Revision</a>
+        </div>
+      </div>
+      <div class="card-body">
+        {% if revisions %}
+        <div class="revision-list">
+          {% for rev in revisions %}
+          <div class="revision-card {% if rev.is_finalized %}finalized{% endif %}">
+            <div class="revision-num">{{ rev.version_number }}</div>
+            <div class="revision-info">
+              <div class="revision-title">
+                Version {{ rev.version_number }}
+                {% if rev.is_finalized %}<span class="badge badge-final" style="margin-left:6px;font-size:10px">✓ FINAL</span>{% endif %}
+              </div>
+              <div class="revision-meta">
+                {{ rev.created_at.strftime('%B %d, %Y at %H:%M UTC') }} · by {{ rev.creator.full_name }}
+                {% if rev.file_name %} · 📎 {{ rev.file_name }}{% endif %}
+              </div>
+              {% if rev.changes_summary %}
+              <div class="text-xs text-muted mt-1">{{ rev.changes_summary }}</div>
+              {% endif %}
+            </div>
+            <div class="revision-actions">
+              <a href="{{ url_for('contracts_pdf', contract_id=contract.id, revision_id=rev.id) }}" class="btn btn-ghost btn-sm" title="Download PDF">PDF</a>
+              {% if not rev.is_finalized and contract.status != 'finalized' %}
+              <form method="POST" action="{{ url_for('contracts_finalize', contract_id=contract.id) }}" style="display:inline">
+                <input type="hidden" name="revision_id" value="{{ rev.id }}">
+                <button type="submit" class="btn btn-success btn-sm" data-confirm="Finalize this revision as the official version? This will mark the contract as complete.">Finalize</button>
+              </form>
+              {% endif %}
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-sm text-muted">No revisions yet. Add the first revision above.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Audit Log -->
+    <div class="card">
+      <div class="card-header"><span class="card-title">Activity Log</span></div>
+      <div class="card-body">
+        {% if audit %}
+        <div class="timeline">
+          {% for log in audit %}
+          <div class="timeline-item">
+            <div class="timeline-dot"></div>
+            <div class="timeline-time">{{ log.created_at.strftime('%B %d, %Y at %H:%M UTC') }}</div>
+            <div class="timeline-action">{{ log.action.replace('_', ' ').title() }}</div>
+            {% if log.details %}<div class="timeline-detail">{{ log.details }}</div>{% endif %}
+            {% if log.user %}<div class="timeline-detail">by {{ log.user.full_name }}</div>{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-sm text-muted">No activity recorded yet.</div>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Right: Sidebar -->
+  <div>
+
+    <!-- Quick Actions -->
+    <div class="card mb-4">
+      <div class="card-header"><span class="card-title">Quick Actions</span></div>
+      <div class="card-body">
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <form method="POST" action="{{ url_for('contracts_status', contract_id=contract.id) }}">
+            <select name="status" class="form-control" style="margin-bottom:6px" onchange="this.form.submit()">
+              <option value="draft" {% if contract.status == 'draft' %}selected{% endif %}>Draft</option>
+              <option value="in_review" {% if contract.status == 'in_review' %}selected{% endif %}>In Review</option>
+              <option value="approved" {% if contract.status == 'approved' %}selected{% endif %}>Approved</option>
+              <option value="finalized" {% if contract.status == 'finalized' %}selected{% endif %}>Finalized</option>
+              <option value="expired" {% if contract.status == 'expired' %}selected{% endif %}>Expired</option>
+            </select>
+            <noscript><button type="submit" class="btn btn-secondary btn-sm">Update Status</button></noscript>
+          </form>
+          {% if contract.revision_count >= 2 %}
+          <a href="{{ url_for('contracts_compare', contract_id=contract.id) }}" class="btn btn-secondary" style="justify-content:center">
+            🔄 Compare Revisions
+          </a>
+          {% endif %}
+          <a href="{{ url_for('contracts_pdf', contract_id=contract.id) }}" class="btn btn-secondary" style="justify-content:center">
+            📄 Download PDF
+          </a>
+          <a href="{{ url_for('revisions_new', contract_id=contract.id) }}" class="btn btn-primary" style="justify-content:center">
+            + Upload Revision
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Contract Info -->
+    <div class="card mb-4">
+      <div class="card-header"><span class="card-title">Contract Info</span></div>
+      <div class="card-body">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div>
+            <div class="meta-label">Status</div>
+            <span class="badge badge-{{ contract.status.replace('_','-') }}">
+              <span class="badge-dot"></span>{{ contract.status.replace('_',' ').title() }}
+            </span>
+          </div>
+          <div>
+            <div class="meta-label">Client</div>
+            <a href="{{ url_for('clients_detail', client_id=contract.client_id) }}" class="text-sm font-semibold">{{ contract.client.name }}</a>
+            {% if contract.client.company %}
+            <div class="text-xs text-muted">{{ contract.client.company }}</div>
+            {% endif %}
+          </div>
+          {% if contract.template %}
+          <div>
+            <div class="meta-label">Template</div>
+            <a href="{{ url_for('templates_detail', template_id=contract.template_id) }}" class="text-sm">{{ contract.template.name }}</a>
+          </div>
+          {% endif %}
+          {% if contract.value %}
+          <div>
+            <div class="meta-label">Contract Value</div>
+            <div class="text-sm font-semibold">${{ '{:,.2f}'.format(contract.value|float) }}</div>
+          </div>
+          {% endif %}
+          {% if contract.start_date %}
+          <div>
+            <div class="meta-label">Term</div>
+            <div class="text-sm">{{ contract.start_date.strftime('%b %d, %Y') }} — {{ contract.end_date.strftime('%b %d, %Y') if contract.end_date else 'Ongoing' }}</div>
+          </div>
+          {% endif %}
+          <div>
+            <div class="meta-label">Created By</div>
+            <div class="text-sm">{{ contract.creator.full_name }}</div>
+          </div>
+          <div>
+            <div class="meta-label">Created</div>
+            <div class="text-sm">{{ contract.created_at.strftime('%B %d, %Y') }}</div>
+          </div>
+          <div>
+            <div class="meta-label">Last Updated</div>
+            <div class="text-sm">{{ contract.updated_at.strftime('%B %d, %Y') }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Field Values -->
+    {% if field_values %}
+    <div class="card">
+      <div class="card-header"><span class="card-title">Field Values</span></div>
+      <div class="card-body">
+        <div style="display:flex;flex-direction:column;gap:10px">
+          {% for name, value in field_values.items() %}
+          <div>
+            <div class="meta-label">{{ name.replace('_', ' ').title() }}</div>
+            <div class="text-sm">{{ value or '—' }}</div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}

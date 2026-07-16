@@ -1,0 +1,76 @@
+{% extends 'base.html' %}
+{% block title %}Edit — {{ contract.title }}{% endblock %}
+{% block page_title %}Edit Contract{% endblock %}
+
+{% block topbar_actions %}
+  <a href="{{ url_for('contracts_detail', contract_id=contract.id) }}" class="btn btn-secondary">← Back</a>
+{% endblock %}
+
+{% block content %}
+<div style="max-width:680px">
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Edit Contract Details</span>
+      <span class="text-sm text-muted">{{ contract.contract_number }}</span>
+    </div>
+    <div class="card-body">
+      <form method="POST" action="{{ url_for('contracts_edit', contract_id=contract.id) }}">
+
+        <div class="form-group">
+          <label class="form-label">Contract Title <span class="required">*</span></label>
+          <input type="text" name="title" class="form-control" value="{{ contract.title }}" required>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Client / Vendor <span class="required">*</span></label>
+            <select name="client_id" class="form-control" required>
+              {% for c in clients %}
+              <option value="{{ c.id }}" {% if c.id == contract.client_id %}selected{% endif %}>
+                {{ c.name }}{% if c.company %} — {{ c.company }}{% endif %}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Status</label>
+            <select name="status" class="form-control">
+              <option value="draft" {% if contract.status == 'draft' %}selected{% endif %}>Draft</option>
+              <option value="in_review" {% if contract.status == 'in_review' %}selected{% endif %}>In Review</option>
+              <option value="approved" {% if contract.status == 'approved' %}selected{% endif %}>Approved</option>
+              <option value="finalized" {% if contract.status == 'finalized' %}selected{% endif %}>Finalized</option>
+              <option value="expired" {% if contract.status == 'expired' %}selected{% endif %}>Expired</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Start Date</label>
+            <input type="date" name="start_date" class="form-control" value="{{ contract.start_date.isoformat() if contract.start_date else '' }}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">End Date</label>
+            <input type="date" name="end_date" class="form-control" value="{{ contract.end_date.isoformat() if contract.end_date else '' }}">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Contract Value ($)</label>
+          <input type="text" name="value" class="form-control" value="{{ contract.value if contract.value else '' }}" placeholder="e.g. 15000.00">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Notes</label>
+          <textarea name="notes" class="form-control" rows="3">{{ contract.notes or '' }}</textarea>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+          <a href="{{ url_for('contracts_detail', contract_id=contract.id) }}" class="btn btn-secondary">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

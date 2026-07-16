@@ -1,36 +1,65 @@
-# [Project name]
+# ContractVault
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A full-stack contract management platform for managing contracts with clients and vendors. Upload templates, create contracts from them, track revisions, compare document changes, and generate finalized PDFs — all with a complete audit trail.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `cd artifacts/contract-manager && python app.py` — run ContractVault (port 8000)
+- Workflow: **ContractVault** (managed in Replit workflows pane)
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- **Backend:** Python 3 + Flask, Flask-Login, Flask-SQLAlchemy
+- **Database:** PostgreSQL (Replit built-in) via psycopg2
+- **PDF Generation:** ReportLab
+- **Document Parsing:** python-docx (for .docx uploads)
+- **Diff/Compare:** Python difflib (HtmlDiff)
+- **Auth:** Flask-Login + Werkzeug password hashing
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+```
+artifacts/contract-manager/
+├── app.py              — Flask app, all routes
+├── models.py           — SQLAlchemy models
+├── requirements.txt    — Python dependencies
+├── uploads/            — Uploaded contract/template files
+├── static/
+│   ├── css/style.css   — All styles
+│   └── js/main.js      — Client-side JS
+└── templates/          — Jinja2 HTML templates
+    ├── base.html        — App shell with sidebar
+    ├── auth/            — Login, register
+    ├── dashboard.html   — Overview
+    ├── clients/         — Client/vendor management
+    ├── templates/       — Contract template management
+    └── contracts/       — Contract lifecycle
+```
 
-## Architecture decisions
+## Database Schema
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- `users` — accounts (email, password_hash, full_name)
+- `clients` — clients & vendors
+- `contract_templates` — reusable templates with `{{FIELD_NAME}}` markers
+- `contracts` — contracts with status lifecycle (draft → in_review → approved → finalized)
+- `contract_revisions` — version history per contract
+- `contract_field_values` — per-contract field fills from template
+- `audit_logs` — full timestamped action log
+
+## Template Field System
+
+Templates use `{{FIELD_NAME}}` markers (uppercase, e.g. `{{CLIENT_NAME}}`, `{{START_DATE}}`). When creating a contract from a template, users fill in each field and the app substitutes them into the content.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- **Auth:** Register/login with email + password
+- **Clients & Vendors:** CRUD with contract history
+- **Templates:** Upload .txt/.docx or paste text; fields auto-detected
+- **Contracts:** Create from template or blank, track status
+- **Revisions:** Upload multiple versions; compare any two with side-by-side diff
+- **Finalize:** Mark a revision as the official final version
+- **PDF Export:** ReportLab-generated professional PDFs for any revision
+- **Audit Trail:** Every action timestamped and attributed
 
 ## User preferences
 
@@ -38,8 +67,7 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- Run from the `artifacts/contract-manager/` directory so relative paths (uploads, templates) resolve correctly
+- `DATABASE_URL` is injected automatically by Replit; no manual configuration needed
+- Template content uses `{{FIELD_NAME}}` syntax — must be ALL CAPS, no spaces
+- Port 8000 (workflow `ContractVault`)

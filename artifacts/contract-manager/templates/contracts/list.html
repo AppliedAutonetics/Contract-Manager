@@ -1,0 +1,111 @@
+{% extends 'base.html' %}
+{% block title %}Contracts{% endblock %}
+{% block page_title %}Contracts{% endblock %}
+{% block page_subtitle %}<div class="topbar-subtitle">{{ contracts|length }} result{% if contracts|length != 1 %}s{% endif %}</div>{% endblock %}
+
+{% block topbar_actions %}
+  <a href="{{ url_for('contracts_new') }}" class="btn btn-primary">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    New Contract
+  </a>
+{% endblock %}
+
+{% block content %}
+<!-- Status pills -->
+<div class="flex gap-2 mb-4 flex-wrap">
+  <a href="{{ url_for('contracts_list') }}" class="btn btn-sm {% if not status %}btn-navy{% else %}btn-secondary{% endif %}">All</a>
+  <a href="{{ url_for('contracts_list', status='draft') }}" class="btn btn-sm {% if status == 'draft' %}btn-navy{% else %}btn-secondary{% endif %}">Draft</a>
+  <a href="{{ url_for('contracts_list', status='in_review') }}" class="btn btn-sm {% if status == 'in_review' %}btn-navy{% else %}btn-secondary{% endif %}">In Review</a>
+  <a href="{{ url_for('contracts_list', status='approved') }}" class="btn btn-sm {% if status == 'approved' %}btn-navy{% else %}btn-secondary{% endif %}">Approved</a>
+  <a href="{{ url_for('contracts_list', status='finalized') }}" class="btn btn-sm {% if status == 'finalized' %}btn-navy{% else %}btn-secondary{% endif %}">Finalized</a>
+  <a href="{{ url_for('contracts_list', status='expired') }}" class="btn btn-sm {% if status == 'expired' %}btn-navy{% else %}btn-secondary{% endif %}">Expired</a>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <form method="GET" class="filter-bar" style="flex:1">
+      <div class="search-input-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input type="text" name="q" value="{{ q }}" placeholder="Search by title or contract number…" class="form-control search-input">
+      </div>
+      <select name="client_id" class="form-control" style="width:auto">
+        <option value="">All Clients</option>
+        {% for c in clients %}
+        <option value="{{ c.id }}" {% if client_id == c.id|string %}selected{% endif %}>{{ c.name }}</option>
+        {% endfor %}
+      </select>
+      <input type="hidden" name="status" value="{{ status }}">
+      <button type="submit" class="btn btn-secondary">Filter</button>
+      {% if q or client_id %}
+      <a href="{{ url_for('contracts_list', status=status) }}" class="btn btn-ghost">Clear</a>
+      {% endif %}
+    </form>
+  </div>
+
+  {% if contracts %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Contract</th>
+          <th>Client</th>
+          <th>Status</th>
+          <th>Revisions</th>
+          <th>Value</th>
+          <th>Updated</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in contracts %}
+        <tr>
+          <td>
+            <a href="{{ url_for('contracts_detail', contract_id=c.id) }}" class="table-link">{{ c.title }}</a>
+            <div class="text-xs text-muted mt-1">{{ c.contract_number }}</div>
+          </td>
+          <td>
+            <a href="{{ url_for('clients_detail', client_id=c.client_id) }}" class="text-sm">{{ c.client.name }}</a>
+            {% if c.client.company %}
+            <div class="text-xs text-muted">{{ c.client.company }}</div>
+            {% endif %}
+          </td>
+          <td>
+            <span class="badge badge-{{ c.status.replace('_','-') }}">
+              <span class="badge-dot"></span>{{ c.status.replace('_',' ').title() }}
+            </span>
+          </td>
+          <td>
+            <span class="badge badge-version">v{{ c.revision_count }}</span>
+            {% if c.latest_revision and c.latest_revision.is_finalized %}
+            <span class="badge badge-final" style="margin-left:4px">✓ Final</span>
+            {% endif %}
+          </td>
+          <td class="text-sm">
+            {% if c.value %}${{ '{:,.0f}'.format(c.value|float) }}{% else %}—{% endif %}
+          </td>
+          <td class="text-sm text-muted">{{ c.updated_at.strftime('%b %d, %Y') }}</td>
+          <td>
+            <div class="flex gap-2">
+              <a href="{{ url_for('contracts_detail', contract_id=c.id) }}" class="btn btn-ghost btn-sm">View</a>
+              <a href="{{ url_for('contracts_pdf', contract_id=c.id) }}" class="btn btn-ghost btn-sm" title="Download PDF">PDF</a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-icon">📄</div>
+    <div class="empty-title">No contracts found</div>
+    <div class="empty-sub">{% if q or status or client_id %}Try adjusting your filters{% else %}Create your first contract to get started{% endif %}</div>
+    {% if not q and not status and not client_id %}
+    <a href="{{ url_for('contracts_new') }}" class="btn btn-primary">New Contract</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,104 @@
+{% extends 'base.html' %}
+{% block title %}{{ client.name }}{% endblock %}
+{% block page_title %}{{ client.name }}{% endblock %}
+{% block page_subtitle %}<div class="topbar-subtitle">{{ client.company or client.client_type.title() }}</div>{% endblock %}
+
+{% block topbar_actions %}
+  <a href="{{ url_for('clients_edit', client_id=client.id) }}" class="btn btn-secondary">Edit</a>
+  <a href="{{ url_for('contracts_new') }}?client_id={{ client.id }}" class="btn btn-primary">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    New Contract
+  </a>
+{% endblock %}
+
+{% block content %}
+<div class="detail-layout">
+  <!-- Main -->
+  <div>
+    <div class="card mb-4">
+      <div class="card-header">
+        <span class="card-title">Contracts</span>
+        <span class="text-sm text-muted">{{ contracts|length }} total</span>
+      </div>
+      {% if contracts %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Contract</th><th>Status</th><th>Value</th><th>Updated</th><th></th></tr>
+          </thead>
+          <tbody>
+            {% for c in contracts %}
+            <tr>
+              <td>
+                <a href="{{ url_for('contracts_detail', contract_id=c.id) }}" class="table-link">{{ c.title }}</a>
+                <div class="text-xs text-muted mt-1">{{ c.contract_number }}</div>
+              </td>
+              <td>
+                <span class="badge badge-{{ c.status.replace('_','-') }}">
+                  <span class="badge-dot"></span>{{ c.status.replace('_',' ').title() }}
+                </span>
+              </td>
+              <td class="text-sm">{% if c.value %}${{ '{:,.2f}'.format(c.value|float) }}{% else %}—{% endif %}</td>
+              <td class="text-sm text-muted">{{ c.updated_at.strftime('%b %d, %Y') }}</td>
+              <td><a href="{{ url_for('contracts_detail', contract_id=c.id) }}" class="btn btn-ghost btn-sm">View</a></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty-state">
+        <div class="empty-icon">📄</div>
+        <div class="empty-title">No contracts yet</div>
+        <div class="empty-sub">Create the first contract for {{ client.name }}</div>
+        <a href="{{ url_for('contracts_new') }}?client_id={{ client.id }}" class="btn btn-primary">New Contract</a>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <div>
+    <div class="card mb-4">
+      <div class="card-header"><span class="card-title">Contact Details</span></div>
+      <div class="card-body">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div>
+            <div class="meta-label">Type</div>
+            <span class="badge badge-{{ client.client_type }}">{{ client.client_type.title() }}</span>
+          </div>
+          {% if client.email %}
+          <div>
+            <div class="meta-label">Email</div>
+            <a href="mailto:{{ client.email }}" class="text-sm">{{ client.email }}</a>
+          </div>
+          {% endif %}
+          {% if client.phone %}
+          <div>
+            <div class="meta-label">Phone</div>
+            <div class="text-sm">{{ client.phone }}</div>
+          </div>
+          {% endif %}
+          {% if client.address %}
+          <div>
+            <div class="meta-label">Address</div>
+            <div class="text-sm" style="white-space:pre-line">{{ client.address }}</div>
+          </div>
+          {% endif %}
+          {% if client.notes %}
+          <div>
+            <div class="meta-label">Notes</div>
+            <div class="text-sm text-muted" style="white-space:pre-wrap">{{ client.notes }}</div>
+          </div>
+          {% endif %}
+          <hr class="divider">
+          <div>
+            <div class="meta-label">Added</div>
+            <div class="text-sm">{{ client.created_at.strftime('%B %d, %Y') }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

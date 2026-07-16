@@ -1,0 +1,155 @@
+{% extends 'base.html' %}
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+{% block page_subtitle %}<div class="topbar-subtitle">Overview of your contract portfolio</div>{% endblock %}
+
+{% block topbar_actions %}
+  <a href="{{ url_for('contracts_new') }}" class="btn btn-primary">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    New Contract
+  </a>
+{% endblock %}
+
+{% block content %}
+<!-- Stats -->
+<div class="stats-grid">
+  <div class="stat-card accent">
+    <div class="stat-label">Total Contracts</div>
+    <div class="stat-value">{{ total_contracts }}</div>
+    <div class="stat-sub">All time</div>
+  </div>
+  <div class="stat-card warning">
+    <div class="stat-label">In Review</div>
+    <div class="stat-value">{{ by_status.in_review }}</div>
+    <div class="stat-sub">Awaiting action</div>
+  </div>
+  <div class="stat-card success">
+    <div class="stat-label">Finalized</div>
+    <div class="stat-value">{{ by_status.finalized }}</div>
+    <div class="stat-sub">Completed contracts</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Draft</div>
+    <div class="stat-value">{{ by_status.draft }}</div>
+    <div class="stat-sub">In progress</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Clients & Vendors</div>
+    <div class="stat-value">{{ total_clients }}</div>
+    <div class="stat-sub">Total contacts</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Templates</div>
+    <div class="stat-value">{{ total_templates }}</div>
+    <div class="stat-sub">Active templates</div>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 320px;gap:24px;align-items:start">
+
+<!-- Recent Contracts -->
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">Recent Contracts</span>
+    <a href="{{ url_for('contracts_list') }}" class="btn btn-ghost btn-sm">View all →</a>
+  </div>
+  {% if recent_contracts %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Contract</th>
+          <th>Client</th>
+          <th>Status</th>
+          <th>Updated</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in recent_contracts %}
+        <tr>
+          <td>
+            <a href="{{ url_for('contracts_detail', contract_id=c.id) }}" class="table-link">{{ c.title }}</a>
+            <div class="text-xs text-muted mt-1">{{ c.contract_number }}</div>
+          </td>
+          <td>
+            <a href="{{ url_for('clients_detail', client_id=c.client_id) }}" class="text-sm">{{ c.client.name }}</a>
+          </td>
+          <td>
+            {% set s = c.status %}
+            <span class="badge badge-{{ s.replace('_','-') }}">
+              <span class="badge-dot"></span>
+              {{ s.replace('_',' ').title() }}
+            </span>
+          </td>
+          <td class="text-sm text-muted">{{ c.updated_at.strftime('%b %d, %Y') }}</td>
+          <td>
+            <a href="{{ url_for('contracts_detail', contract_id=c.id) }}" class="btn btn-ghost btn-sm">View</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-icon">📄</div>
+    <div class="empty-title">No contracts yet</div>
+    <div class="empty-sub">Create your first contract to get started</div>
+    <a href="{{ url_for('contracts_new') }}" class="btn btn-primary">New Contract</a>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Activity Feed -->
+<div class="card">
+  <div class="card-header">
+    <span class="card-title">Recent Activity</span>
+  </div>
+  <div class="card-body">
+    {% if recent_activity %}
+    <div class="timeline">
+      {% for log in recent_activity %}
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <div class="timeline-time">{{ log.created_at.strftime('%b %d · %H:%M') }}</div>
+        <div class="timeline-action">{{ log.action.replace('_', ' ').title() }}</div>
+        {% if log.details %}
+        <div class="timeline-detail">{{ log.details[:60] }}{% if log.details|length > 60 %}…{% endif %}</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state" style="padding:32px 0">
+      <div class="empty-icon">🕐</div>
+      <div class="empty-sub">Activity will appear here</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+</div>
+
+<!-- Quick Actions -->
+<div class="card mt-6">
+  <div class="card-header"><span class="card-title">Quick Actions</span></div>
+  <div class="card-body">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">
+      <a href="{{ url_for('contracts_new') }}" class="btn btn-secondary" style="justify-content:center;padding:14px">
+        📄 New Contract
+      </a>
+      <a href="{{ url_for('clients_new') }}" class="btn btn-secondary" style="justify-content:center;padding:14px">
+        👤 Add Client
+      </a>
+      <a href="{{ url_for('templates_new') }}" class="btn btn-secondary" style="justify-content:center;padding:14px">
+        📋 Upload Template
+      </a>
+      <a href="{{ url_for('contracts_list') }}?status=in_review" class="btn btn-secondary" style="justify-content:center;padding:14px">
+        🔍 Review Queue ({{ by_status.in_review }})
+      </a>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

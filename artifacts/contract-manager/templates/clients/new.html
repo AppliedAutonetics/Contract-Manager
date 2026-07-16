@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+{% set is_edit = client and client.id %}
+{% block title %}{{ 'Edit Client' if is_edit else 'Add Contact' }}{% endblock %}
+{% block page_title %}{{ 'Edit Client' if is_edit else 'Add Client or Vendor' }}{% endblock %}
+
+{% block topbar_actions %}
+  <a href="{{ url_for('clients_list') }}" class="btn btn-secondary">← Back to Contacts</a>
+{% endblock %}
+
+{% block content %}
+<div style="max-width:680px">
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">{{ 'Edit Contact Details' if is_edit else 'New Contact' }}</span>
+    </div>
+    <div class="card-body">
+      <form method="POST" action="{{ url_for('clients_edit', client_id=client.id) if is_edit else url_for('clients_new') }}">
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Full Name <span class="required">*</span></label>
+            <input type="text" name="name" class="form-control" value="{{ client.name if client else '' }}" required placeholder="e.g. Jane Smith">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Company / Organization</label>
+            <input type="text" name="company" class="form-control" value="{{ client.company if client else '' }}" placeholder="e.g. Acme Corp">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Type</label>
+          <select name="client_type" class="form-control">
+            <option value="client" {% if client and client.client_type == 'client' %}selected{% endif %}>Client</option>
+            <option value="vendor" {% if client and client.client_type == 'vendor' %}selected{% endif %}>Vendor</option>
+          </select>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Email</label>
+            <input type="email" name="email" class="form-control" value="{{ client.email if client else '' }}" placeholder="contact@company.com">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Phone</label>
+            <input type="text" name="phone" class="form-control" value="{{ client.phone if client else '' }}" placeholder="+1 (555) 000-0000">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Address</label>
+          <textarea name="address" class="form-control" rows="3" placeholder="Street, City, State, ZIP">{{ client.address if client else '' }}</textarea>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Internal Notes</label>
+          <textarea name="notes" class="form-control" rows="3" placeholder="Any internal notes about this contact…">{{ client.notes if client else '' }}</textarea>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">{{ 'Save Changes' if is_edit else 'Add Contact' }}</button>
+          <a href="{{ url_for('clients_detail', client_id=client.id) if is_edit else url_for('clients_list') }}" class="btn btn-secondary">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

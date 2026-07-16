@@ -1,0 +1,87 @@
+{% extends 'base.html' %}
+{% block title %}{{ template.name }}{% endblock %}
+{% block page_title %}{{ template.name }}{% endblock %}
+{% block page_subtitle %}<div class="topbar-subtitle">{{ template.template_type.upper() }} Template</div>{% endblock %}
+
+{% block topbar_actions %}
+  <a href="{{ url_for('templates_edit', template_id=template.id) }}" class="btn btn-secondary">Edit</a>
+  <a href="{{ url_for('contracts_new') }}?template_id={{ template.id }}" class="btn btn-primary">
+    Use This Template
+  </a>
+{% endblock %}
+
+{% block content %}
+<div class="detail-layout">
+  <!-- Content -->
+  <div>
+    <div class="card mb-4">
+      <div class="card-header">
+        <span class="card-title">Template Content</span>
+        <span class="text-sm text-muted">{{ template.content|length }} characters</span>
+      </div>
+      <div class="card-body">
+        <div class="contract-text">{{ template.content }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <div>
+    <div class="card mb-4">
+      <div class="card-header"><span class="card-title">Template Info</span></div>
+      <div class="card-body">
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div>
+            <div class="meta-label">Type</div>
+            <span class="badge badge-approved">{{ template.template_type.upper() }}</span>
+          </div>
+          {% if template.description %}
+          <div>
+            <div class="meta-label">Description</div>
+            <div class="text-sm">{{ template.description }}</div>
+          </div>
+          {% endif %}
+          <div>
+            <div class="meta-label">Created By</div>
+            <div class="text-sm">{{ template.creator.full_name }}</div>
+          </div>
+          <div>
+            <div class="meta-label">Created</div>
+            <div class="text-sm">{{ template.created_at.strftime('%B %d, %Y') }}</div>
+          </div>
+          <div>
+            <div class="meta-label">Last Updated</div>
+            <div class="text-sm">{{ template.updated_at.strftime('%B %d, %Y') }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mb-4">
+      <div class="card-header">
+        <span class="card-title">Fillable Fields</span>
+        <span class="badge badge-version">{{ template.fields|length }}</span>
+      </div>
+      <div class="card-body">
+        {% if template.fields %}
+        <div class="fields-list">
+          {% for f in template.fields %}
+          <span class="field-tag">{{'{{'}}{{ f }}{{'}}'}}</span>
+          {% endfor %}
+        </div>
+        <p class="text-xs text-muted mt-4">These fields will be filled in when creating a contract from this template.</p>
+        {% else %}
+        <div class="text-sm text-muted">
+          No fillable fields detected.<br>
+          Add <code>{{FIELD_NAME}}</code> markers to make fields dynamic.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <a href="{{ url_for('contracts_new') }}?template_id={{ template.id }}" class="btn btn-primary" style="width:100%;justify-content:center">
+      Create Contract from Template
+    </a>
+  </div>
+</div>
+{% endblock %}

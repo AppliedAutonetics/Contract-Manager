@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+{% block title %}Add Revision — {{ contract.title }}{% endblock %}
+{% block page_title %}Add Revision{% endblock %}
+{% block page_subtitle %}<div class="topbar-subtitle">{{ contract.title }} · {{ contract.contract_number }}</div>{% endblock %}
+
+{% block topbar_actions %}
+  <a href="{{ url_for('contracts_detail', contract_id=contract.id) }}" class="btn btn-secondary">← Back to Contract</a>
+{% endblock %}
+
+{% block content %}
+<div style="max-width:820px">
+
+  {% if latest %}
+  <div class="card mb-4" style="border-left:4px solid var(--navy)">
+    <div class="card-header">
+      <span class="card-title">Current Version (v{{ latest.version_number }})</span>
+      <span class="text-sm text-muted">{{ latest.created_at.strftime('%b %d, %Y') }} by {{ latest.creator.full_name }}</span>
+    </div>
+    <div class="card-body" style="padding:16px 24px">
+      <div style="max-height:200px;overflow-y:auto;white-space:pre-wrap;font-size:13px;line-height:1.6;color:var(--gray-600);background:var(--gray-50);padding:16px;border-radius:var(--radius);border:1px solid var(--gray-200)">{{ latest.content[:1000] }}{% if latest.content|length > 1000 %}…{% endif %}</div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">New Revision — v{{ (latest.version_number + 1) if latest else 1 }}</span>
+    </div>
+    <div class="card-body">
+      <form method="POST" enctype="multipart/form-data" action="{{ url_for('revisions_new', contract_id=contract.id) }}">
+
+        <div class="form-group">
+          <label class="form-label">Upload Revised Document <span class="text-muted">(optional)</span></label>
+          <div class="file-upload-area">
+            <input type="file" name="file" accept=".txt,.docx,.doc">
+            <div class="upload-icon">📂</div>
+            <div class="upload-text">Click to browse or drag a file here</div>
+            <div class="upload-subtext">Supports .txt, .docx — max 16MB. Uploading replaces the text below.</div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Revised Content</label>
+          <div class="form-hint" style="margin-bottom:8px">Paste the updated contract text. If you uploaded a file above, this will be populated from it.</div>
+          <textarea name="content" class="form-control" rows="20"
+            placeholder="Paste the revised contract text here…&#10;&#10;You can also use this to add a clean, final version after negotiations are complete.">{{ latest.content if latest else '' }}</textarea>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Changes Summary</label>
+          <input type="text" name="changes_summary" class="form-control" placeholder="e.g. Updated payment terms in Section 4, clarified IP ownership clause">
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Upload Revision v{{ (latest.version_number + 1) if latest else 1 }}</button>
+          <a href="{{ url_for('contracts_detail', contract_id=contract.id) }}" class="btn btn-secondary">Cancel</a>
+          {% if contract.revision_count >= 2 %}
+          <a href="{{ url_for('contracts_compare', contract_id=contract.id) }}" class="btn btn-ghost" style="margin-left:auto">
+            Compare existing revisions →
+          </a>
+          {% endif %}
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

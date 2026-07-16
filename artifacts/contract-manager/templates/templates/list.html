@@ -1,0 +1,88 @@
+{% extends 'base.html' %}
+{% block title %}Templates{% endblock %}
+{% block page_title %}Contract Templates{% endblock %}
+{% block page_subtitle %}<div class="topbar-subtitle">{{ templates|length }} template{% if templates|length != 1 %}s{% endif %}</div>{% endblock %}
+
+{% block topbar_actions %}
+  <a href="{{ url_for('templates_new') }}" class="btn btn-primary">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    Upload Template
+  </a>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <form method="GET" class="filter-bar" style="flex:1">
+      <div class="search-input-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input type="text" name="q" value="{{ q }}" placeholder="Search templates…" class="form-control search-input">
+      </div>
+      <select name="type" class="form-control" style="width:auto" onchange="this.form.submit()">
+        <option value="">All Types</option>
+        <option value="contract" {% if ttype == 'contract' %}selected{% endif %}>Contracts</option>
+        <option value="sow" {% if ttype == 'sow' %}selected{% endif %}>Statements of Work</option>
+        <option value="amendment" {% if ttype == 'amendment' %}selected{% endif %}>Amendments</option>
+      </select>
+      <button type="submit" class="btn btn-secondary">Search</button>
+      {% if q or ttype %}<a href="{{ url_for('templates_list') }}" class="btn btn-ghost">Clear</a>{% endif %}
+    </form>
+  </div>
+
+  {% if templates %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Template Name</th>
+          <th>Type</th>
+          <th>Fields</th>
+          <th>Created By</th>
+          <th>Updated</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in templates %}
+        <tr>
+          <td>
+            <a href="{{ url_for('templates_detail', template_id=t.id) }}" class="table-link">{{ t.name }}</a>
+            {% if t.description %}
+            <div class="text-xs text-muted mt-1">{{ t.description[:80] }}{% if t.description|length > 80 %}…{% endif %}</div>
+            {% endif %}
+          </td>
+          <td>
+            <span class="badge badge-approved">{{ t.template_type.upper() }}</span>
+          </td>
+          <td>
+            {% if t.fields %}
+            <span class="text-sm font-semibold text-navy">{{ t.fields|length }} field{% if t.fields|length != 1 %}s{% endif %}</span>
+            {% else %}
+            <span class="text-sm text-muted">None</span>
+            {% endif %}
+          </td>
+          <td class="text-sm">{{ t.creator.full_name }}</td>
+          <td class="text-sm text-muted">{{ t.updated_at.strftime('%b %d, %Y') }}</td>
+          <td>
+            <div class="flex gap-2">
+              <a href="{{ url_for('templates_detail', template_id=t.id) }}" class="btn btn-ghost btn-sm">View</a>
+              <a href="{{ url_for('templates_edit', template_id=t.id) }}" class="btn btn-ghost btn-sm">Edit</a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-icon">📋</div>
+    <div class="empty-title">No templates yet</div>
+    <div class="empty-sub">Upload your standard contract or SOW template to get started.<br>Use <code>{{FIELD_NAME}}</code> syntax to mark fillable fields.</div>
+    <a href="{{ url_for('templates_new') }}" class="btn btn-primary" style="margin-top:8px">Upload Template</a>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

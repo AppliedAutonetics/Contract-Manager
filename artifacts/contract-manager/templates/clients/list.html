@@ -1,0 +1,88 @@
+{% extends 'base.html' %}
+{% block title %}Clients & Vendors{% endblock %}
+{% block page_title %}Clients & Vendors{% endblock %}
+{% block page_subtitle %}<div class="topbar-subtitle">{{ clients|length }} contact{% if clients|length != 1 %}s{% endif %}</div>{% endblock %}
+
+{% block topbar_actions %}
+  <a href="{{ url_for('clients_new') }}" class="btn btn-primary">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    Add Contact
+  </a>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <form method="GET" class="filter-bar" style="flex:1">
+      <div class="search-input-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input type="text" name="q" value="{{ q }}" placeholder="Search by name, company, or email…" class="form-control search-input">
+      </div>
+      <select name="type" class="form-control" style="width:auto" onchange="this.form.submit()">
+        <option value="">All Types</option>
+        <option value="client" {% if ctype == 'client' %}selected{% endif %}>Clients</option>
+        <option value="vendor" {% if ctype == 'vendor' %}selected{% endif %}>Vendors</option>
+      </select>
+      <button type="submit" class="btn btn-secondary">Search</button>
+      {% if q or ctype %}
+      <a href="{{ url_for('clients_list') }}" class="btn btn-ghost">Clear</a>
+      {% endif %}
+    </form>
+  </div>
+
+  {% if clients %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Company</th>
+          <th>Type</th>
+          <th>Email</th>
+          <th>Phone</th>
+          <th>Contracts</th>
+          <th>Added</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in clients %}
+        <tr>
+          <td>
+            <a href="{{ url_for('clients_detail', client_id=c.id) }}" class="table-link">{{ c.name }}</a>
+          </td>
+          <td class="text-sm text-muted">{{ c.company or '—' }}</td>
+          <td>
+            <span class="badge badge-{{ c.client_type }}">{{ c.client_type.title() }}</span>
+          </td>
+          <td class="text-sm">{{ c.email or '—' }}</td>
+          <td class="text-sm text-muted">{{ c.phone or '—' }}</td>
+          <td>
+            <span class="badge badge-version">{{ c.contracts.count() }}</span>
+          </td>
+          <td class="text-sm text-muted">{{ c.created_at.strftime('%b %d, %Y') }}</td>
+          <td>
+            <div class="flex gap-2">
+              <a href="{{ url_for('clients_detail', client_id=c.id) }}" class="btn btn-ghost btn-sm">View</a>
+              <a href="{{ url_for('clients_edit', client_id=c.id) }}" class="btn btn-ghost btn-sm">Edit</a>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-icon">👥</div>
+    <div class="empty-title">No contacts found</div>
+    <div class="empty-sub">{% if q %}Try a different search term{% else %}Add your first client or vendor{% endif %}</div>
+    {% if not q %}
+    <a href="{{ url_for('clients_new') }}" class="btn btn-primary">Add Contact</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
