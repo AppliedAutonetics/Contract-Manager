@@ -1,0 +1,13 @@
+kind = "web"
+previewPath = "/"
+title = "ContractVault"
+version = "1.0.0"
+id = "Cv7mKpL2nXqR9sWdTy3u"
+
+[[services]]
+localPort = 8000
+name = "web"
+paths = ["/"]
+
+[services.development]
+run = "cd artifacts/contract-manager && python app.py"
