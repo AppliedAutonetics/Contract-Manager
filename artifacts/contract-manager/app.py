@@ -271,6 +271,11 @@ def login():
             db.session.commit()
             login_user(user, remember=remember)
             next_page = request.args.get('next')
+            if next_page:
+                from urllib.parse import urlparse
+                parsed = urlparse(next_page)
+                if parsed.scheme or parsed.netloc:  # absolute URL — reject it
+                    next_page = None
             flash(f'Welcome back, {user.full_name}!', 'success')
             return redirect(next_page or url_for('dashboard'))
         else:
