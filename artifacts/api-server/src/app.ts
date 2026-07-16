@@ -27,12 +27,13 @@ app.use(
   }),
 );
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-app.use("/api", router);
+// Body parsing only for /api routes — do NOT apply globally or the stream
+// gets consumed before http-proxy-middleware can forward it to Flask.
+app.use("/api", express.json(), express.urlencoded({ extended: true }), router);
 
-// Proxy all non-/api requests to the Flask ContractVault app
+// Proxy all non-/api requests to the Flask ContractVault app.
+// Must come after /api so body parsing never runs on proxied requests.
 app.use(
   "/",
   createProxyMiddleware({
