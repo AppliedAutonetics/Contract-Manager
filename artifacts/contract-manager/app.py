@@ -321,17 +321,17 @@ def logout():
 @app.route('/')
 @login_required
 def dashboard():
-    total_contracts = Contract.query.count()
+    total_contracts = Contract.query.filter_by(created_by=current_user.id).count()
     by_status = {
-        'draft': Contract.query.filter_by(status='draft').count(),
-        'in_review': Contract.query.filter_by(status='in_review').count(),
-        'approved': Contract.query.filter_by(status='approved').count(),
-        'finalized': Contract.query.filter_by(status='finalized').count(),
+        'draft': Contract.query.filter_by(created_by=current_user.id, status='draft').count(),
+        'in_review': Contract.query.filter_by(created_by=current_user.id, status='in_review').count(),
+        'approved': Contract.query.filter_by(created_by=current_user.id, status='approved').count(),
+        'finalized': Contract.query.filter_by(created_by=current_user.id, status='finalized').count(),
     }
-    recent_contracts = Contract.query.order_by(Contract.updated_at.desc()).limit(8).all()
-    total_clients = Client.query.count()
-    total_templates = ContractTemplate.query.filter_by(is_active=True).count()
-    recent_activity = AuditLog.query.order_by(AuditLog.created_at.desc()).limit(10).all()
+    recent_contracts = Contract.query.filter_by(created_by=current_user.id).order_by(Contract.updated_at.desc()).limit(8).all()
+    total_clients = Client.query.filter_by(created_by=current_user.id).count()
+    total_templates = ContractTemplate.query.filter_by(is_active=True, created_by=current_user.id).count()
+    recent_activity = AuditLog.query.filter_by(user_id=current_user.id).order_by(AuditLog.created_at.desc()).limit(10).all()
 
     return render_template('dashboard.html',
         total_contracts=total_contracts,
@@ -350,7 +350,7 @@ def dashboard():
 def clients_list():
     q = request.args.get('q', '')
     ctype = request.args.get('type', '')
-    query = Client.query
+    query = Client.query.filter_by(created_by=current_user.id)
     if q:
         query = query.filter(
             db.or_(Client.name.ilike(f'%{q}%'), Client.company.ilike(f'%{q}%'), Client.email.ilike(f'%{q}%'))
@@ -392,6 +392,8 @@ def clients_new():
 @login_required
 def clients_detail(client_id):
     client = Client.query.get_or_404(client_id)
+    if client.created_by != current_user.id:
+        abort(403)
     contracts = client.contracts.order_by(Contract.updated_at.desc()).all()
     return render_template('clients/detail.html', client=client, contracts=contracts)
 
@@ -400,6 +402,8 @@ def clients_detail(client_id):
 @login_required
 def clients_edit(client_id):
     client = Client.query.get_or_404(client_id)
+    if client.created_by != current_user.id:
+        abort(403)
     if request.method == 'POST':
         client.name = request.form.get('name', '').strip()
         client.company = request.form.get('company', '').strip()
@@ -423,7 +427,7 @@ def clients_edit(client_id):
 def templates_list():
     q = request.args.get('q', '')
     ttype = request.args.get('type', '')
-    query = ContractTemplate.query.filter_by(is_active=True)
+    query = ContractTemplate.query.filter_by(is_active=True, created_by=current_user.id)
     if q:
         query = query.filter(ContractTemplate.name.ilike(f'%{q}%'))
     if ttype:
@@ -478,6 +482,8 @@ def templates_new():
 @login_required
 def templates_detail(template_id):
     template = ContractTemplate.query.get_or_404(template_id)
+    if template.created_by != current_user.id:
+        abort(403)
     return render_template('templates/detail.html', template=template)
 
 
@@ -485,6 +491,8 @@ def templates_detail(template_id):
 @login_required
 def templates_edit(template_id):
     template = ContractTemplate.query.get_or_404(template_id)
+    if template.created_by != current_user.id:
+        abort(403)
     if request.method == 'POST':
         content = request.form.get('content', '').strip()
 
@@ -514,6 +522,8 @@ def templates_edit(template_id):
 @login_required
 def templates_delete(template_id):
     template = ContractTemplate.query.get_or_404(template_id)
+    if template.created_by != current_user.id:
+        abort(403)
     template.is_active = False
     log_action('delete_template', 'template', template.id, details=f'Deleted template: {template.name}')
     db.session.commit()
@@ -525,6 +535,8 @@ def templates_delete(template_id):
 @login_required
 def template_fields_api(template_id):
     template = ContractTemplate.query.get_or_404(template_id)
+    if template.created_by != current_user.id:
+        abort(403)
     return jsonify({'fields': template.fields, 'content': template.content})
 
 
@@ -536,7 +548,7 @@ def contracts_list():
     q = request.args.get('q', '')
     status = request.args.get('status', '')
     client_id = request.args.get('client_id', '')
-    query = Contract.query
+    query = Contract.query.filter_by(created_by=current_user.id)
     if q:
         query = query.filter(
             db.or_(Contract.title.ilike(f'%{q}%'), Contract.contract_number.ilike(f'%{q}%'))
@@ -546,7 +558,7 @@ def contracts_list():
     if client_id:
         query = query.filter_by(client_id=int(client_id))
     contracts = query.order_by(Contract.updated_at.desc()).all()
-    clients = Client.query.order_by(Client.name).all()
+    clients = Client.query.filter_by(created_by=current_user.id).order_by(Client.name).all()
     return render_template('contracts/list.html', contracts=contracts, clients=clients,
                            q=q, status=status, client_id=client_id)
 
@@ -554,12 +566,26 @@ def contracts_list():
 @app.route('/contracts/new', methods=['GET', 'POST'])
 @login_required
 def contracts_new():
-    clients = Client.query.order_by(Client.name).all()
-    templates = ContractTemplate.query.filter_by(is_active=True).order_by(ContractTemplate.name).all()
+    clients = Client.query.filter_by(created_by=current_user.id).order_by(Client.name).all()
+    templates = ContractTemplate.query.filter_by(is_active=True, created_by=current_user.id).order_by(ContractTemplate.name).all()
 
     if request.method == 'POST':
         template_id = request.form.get('template_id')
         template_id = int(template_id) if template_id else None
+
+        # Validate that the submitted client and template belong to the current user
+        submitted_client_id = request.form.get('client_id')
+        if not submitted_client_id:
+            flash('Client is required.', 'error')
+            return render_template('contracts/new.html', clients=clients, templates=templates, contract=None)
+        submitted_client = Client.query.filter_by(id=int(submitted_client_id), created_by=current_user.id).first()
+        if not submitted_client:
+            abort(403)
+
+        if template_id:
+            submitted_template = ContractTemplate.query.filter_by(id=template_id, created_by=current_user.id, is_active=True).first()
+            if not submitted_template:
+                abort(403)
 
         start_date = None
         end_date = None
@@ -583,7 +609,7 @@ def contracts_new():
 
         contract = Contract(
             title=request.form.get('title', '').strip(),
-            client_id=int(request.form.get('client_id')),
+            client_id=submitted_client.id,
             template_id=template_id,
             status='draft',
             notes=request.form.get('notes', '').strip(),
@@ -646,6 +672,8 @@ def contracts_new():
 @login_required
 def contracts_detail(contract_id):
     contract = Contract.query.get_or_404(contract_id)
+    if contract.created_by != current_user.id:
+        abort(403)
     revisions = contract.revisions.order_by(ContractRevision.version_number.desc()).all()
     field_values = {fv.field_name: fv.field_value for fv in contract.field_values}
     audit = contract.audit_logs.order_by(AuditLog.created_at.desc()).limit(20).all()
@@ -657,11 +685,22 @@ def contracts_detail(contract_id):
 @login_required
 def contracts_edit(contract_id):
     contract = Contract.query.get_or_404(contract_id)
-    clients = Client.query.order_by(Client.name).all()
+    if contract.created_by != current_user.id:
+        abort(403)
+    clients = Client.query.filter_by(created_by=current_user.id).order_by(Client.name).all()
 
     if request.method == 'POST':
+        # Validate that the submitted client belongs to the current user
+        submitted_client_id = request.form.get('client_id')
+        if not submitted_client_id:
+            flash('Client is required.', 'error')
+            return render_template('contracts/edit.html', contract=contract, clients=clients)
+        submitted_client = Client.query.filter_by(id=int(submitted_client_id), created_by=current_user.id).first()
+        if not submitted_client:
+            abort(403)
+
         contract.title = request.form.get('title', '').strip()
-        contract.client_id = int(request.form.get('client_id'))
+        contract.client_id = submitted_client.id
         contract.status = request.form.get('status', contract.status)
         contract.notes = request.form.get('notes', '').strip()
         contract.updated_at = datetime.utcnow()
@@ -696,6 +735,8 @@ def contracts_edit(contract_id):
 @login_required
 def revisions_new(contract_id):
     contract = Contract.query.get_or_404(contract_id)
+    if contract.created_by != current_user.id:
+        abort(403)
 
     if request.method == 'POST':
         content = request.form.get('content', '').strip()
@@ -747,6 +788,8 @@ def revisions_new(contract_id):
 @login_required
 def contracts_compare(contract_id):
     contract = Contract.query.get_or_404(contract_id)
+    if contract.created_by != current_user.id:
+        abort(403)
     rev1_id = request.args.get('rev1', type=int)
     rev2_id = request.args.get('rev2', type=int)
 
@@ -755,8 +798,12 @@ def contracts_compare(contract_id):
         flash('You need at least 2 revisions to compare.', 'warning')
         return redirect(url_for('contracts_detail', contract_id=contract_id))
 
-    rev1 = ContractRevision.query.get(rev1_id) if rev1_id else revisions[-2]
-    rev2 = ContractRevision.query.get(rev2_id) if rev2_id else revisions[-1]
+    rev1 = ContractRevision.query.get_or_404(rev1_id) if rev1_id else revisions[-2]
+    if rev1_id and rev1.contract_id != contract_id:
+        abort(403)
+    rev2 = ContractRevision.query.get_or_404(rev2_id) if rev2_id else revisions[-1]
+    if rev2_id and rev2.contract_id != contract_id:
+        abort(403)
 
     # Generate HTML diff
     differ = difflib.HtmlDiff(wrapcolumn=80)
@@ -785,10 +832,14 @@ def contracts_compare(contract_id):
 @login_required
 def contracts_finalize(contract_id):
     contract = Contract.query.get_or_404(contract_id)
+    if contract.created_by != current_user.id:
+        abort(403)
     revision_id = request.form.get('revision_id', type=int)
 
     if revision_id:
-        revision = ContractRevision.query.get(revision_id)
+        revision = ContractRevision.query.get_or_404(revision_id)
+        if revision.contract_id != contract_id:
+            abort(403)
     else:
         revision = contract.latest_revision
 
@@ -813,8 +864,15 @@ def contracts_finalize(contract_id):
 @login_required
 def contracts_pdf(contract_id):
     contract = Contract.query.get_or_404(contract_id)
+    if contract.created_by != current_user.id:
+        abort(403)
     revision_id = request.args.get('revision_id', type=int)
-    revision = ContractRevision.query.get(revision_id) if revision_id else contract.latest_revision
+    if revision_id:
+        revision = ContractRevision.query.get_or_404(revision_id)
+        if revision.contract_id != contract_id:
+            abort(403)
+    else:
+        revision = contract.latest_revision
 
     pdf_buffer = generate_pdf(contract, revision)
     filename = f'{contract.contract_number}_{contract.title.replace(" ", "_")}'
@@ -834,6 +892,8 @@ def contracts_pdf(contract_id):
 @login_required
 def contracts_status(contract_id):
     contract = Contract.query.get_or_404(contract_id)
+    if contract.created_by != current_user.id:
+        abort(403)
     new_status = request.form.get('status')
     valid_statuses = ['draft', 'in_review', 'approved', 'finalized', 'expired']
     if new_status in valid_statuses:
