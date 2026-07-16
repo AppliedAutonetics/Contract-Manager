@@ -34,7 +34,7 @@ modules = ["nodejs-24", "python-base-3.13", "postgresql-16"]
 
     [agent]
     stack = "PNPM_WORKSPACE"
-    expertMode = true
+expertMode = true
 
     [postMerge]
     path = "scripts/post-merge.sh"
