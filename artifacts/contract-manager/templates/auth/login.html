@@ -31,6 +31,7 @@
   <p class="auth-subtitle">Sign in to manage your contracts</p>
 
   <form method="POST" action="{{ url_for('login') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="form-group">
       <label class="form-label">Email Address</label>
       <input type="email" name="email" class="form-control" placeholder="you@company.com" required autofocus>

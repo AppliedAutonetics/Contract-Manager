@@ -130,6 +130,7 @@
       <div class="text-sm text-muted">Mark v{{ rev2.version_number }} as the official final version of this contract.</div>
     </div>
     <form method="POST" action="{{ url_for('contracts_finalize', contract_id=contract.id) }}" style="display:inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="revision_id" value="{{ rev2.id }}">
       <button type="submit" class="btn btn-success" data-confirm="Finalize v{{ rev2.version_number }} as the official version?">
         ✓ Finalize v{{ rev2.version_number }}

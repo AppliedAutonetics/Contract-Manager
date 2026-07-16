@@ -8,6 +8,7 @@ from io import BytesIO
 from flask import (Flask, render_template, redirect, url_for, flash, request,
                    jsonify, send_file, abort, session)
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
+from flask_wtf.csrf import CSRFProtect
 from werkzeug.utils import secure_filename
 
 from models import db, User, Client, ContractTemplate, Contract, ContractRevision, ContractFieldValue, AuditLog
@@ -43,6 +44,7 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Initialize extensions
 db.init_app(app)
+csrf = CSRFProtect(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 login_manager.login_message = 'Please log in to access this page.'

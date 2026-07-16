@@ -38,6 +38,7 @@
         <div style="font-size:13px;color:#b45309">Awaiting approval. {{ contract.revision_count }} revision{% if contract.revision_count != 1 %}s{% endif %} uploaded.</div>
       </div>
       <form method="POST" action="{{ url_for('contracts_status', contract_id=contract.id) }}" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="hidden" name="status" value="approved">
         <button type="submit" class="btn btn-success btn-sm">Mark Approved</button>
       </form>
@@ -103,6 +104,7 @@
               <a href="{{ url_for('contracts_pdf', contract_id=contract.id, revision_id=rev.id) }}" class="btn btn-ghost btn-sm" title="Download PDF">PDF</a>
               {% if not rev.is_finalized and contract.status != 'finalized' %}
               <form method="POST" action="{{ url_for('contracts_finalize', contract_id=contract.id) }}" style="display:inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="revision_id" value="{{ rev.id }}">
                 <button type="submit" class="btn btn-success btn-sm" data-confirm="Finalize this revision as the official version? This will mark the contract as complete.">Finalize</button>
               </form>
@@ -150,6 +152,7 @@
       <div class="card-body">
         <div style="display:flex;flex-direction:column;gap:8px">
           <form method="POST" action="{{ url_for('contracts_status', contract_id=contract.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <select name="status" class="form-control" style="margin-bottom:6px" onchange="this.form.submit()">
               <option value="draft" {% if contract.status == 'draft' %}selected{% endif %}>Draft</option>
               <option value="in_review" {% if contract.status == 'in_review' %}selected{% endif %}>In Review</option>

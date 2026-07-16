@@ -28,7 +28,7 @@
     </div>
     <div class="card-body">
       <form method="POST" enctype="multipart/form-data" action="{{ url_for('revisions_new', contract_id=contract.id) }}">
-
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-group">
           <label class="form-label">Upload Revised Document <span class="text-muted">(optional)</span></label>
           <div class="file-upload-area">

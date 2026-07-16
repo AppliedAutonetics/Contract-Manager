@@ -15,7 +15,7 @@
     </div>
     <div class="card-body">
       <form method="POST" action="{{ url_for('contracts_edit', contract_id=contract.id) }}">
-
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-group">
           <label class="form-label">Contract Title <span class="required">*</span></label>
           <input type="text" name="title" class="form-control" value="{{ contract.title }}" required>

@@ -31,6 +31,7 @@
   <p class="auth-subtitle">Start managing contracts in minutes</p>
 
   <form method="POST" action="{{ url_for('register') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="form-group">
       <label class="form-label">Full Name <span class="required">*</span></label>
       <input type="text" name="full_name" class="form-control" placeholder="Jane Smith" required autofocus>

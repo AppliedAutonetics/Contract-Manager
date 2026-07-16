@@ -16,7 +16,7 @@
     <div class="card-body">
       <form method="POST" enctype="multipart/form-data"
             action="{{ url_for('templates_edit', template_id=template.id) if is_edit else url_for('templates_new') }}">
-
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">Template Name <span class="required">*</span></label>
@@ -84,6 +84,7 @@
           {% if is_edit %}
           <a href="{{ url_for('templates_detail', template_id=template.id) }}" class="btn btn-secondary">Cancel</a>
           <form method="POST" action="{{ url_for('templates_delete', template_id=template.id) }}" style="margin-left:auto">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-danger btn-sm" data-confirm="Delete this template? It will no longer be available for new contracts.">Delete Template</button>
           </form>
           {% else %}

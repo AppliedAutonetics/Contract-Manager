@@ -15,7 +15,7 @@
     </div>
     <div class="card-body">
       <form method="POST" action="{{ url_for('clients_edit', client_id=client.id) if is_edit else url_for('clients_new') }}">
-
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">Full Name <span class="required">*</span></label>
