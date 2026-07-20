@@ -4,7 +4,7 @@
 {% block page_subtitle %}<div class="topbar-subtitle">{{ template.template_type.upper() }} Template</div>{% endblock %}
 
 {% block topbar_actions %}
-  <a href="{{ url_for('templates_edit', template_id=template.id) }}" class="btn btn-secondary">Edit</a>
+  <a href="{{ url_for('templates_edit', template_id=template.id) }}" class="btn btn-secondary">Edit Document</a>
   <a href="{{ url_for('contracts_new') }}?template_id={{ template.id }}" class="btn btn-primary">
     Use This Template
   </a>
@@ -12,17 +12,86 @@
 
 {% block content %}
 <div class="detail-layout">
-  <!-- Content -->
+
+  <!-- Main content column -->
   <div>
+
+    <!-- Field editor toolbar (hidden until Edit Fields is clicked) -->
+    <div id="field-editor-bar" style="display:none;margin-bottom:12px">
+      <div style="background:#1a2742;border-radius:var(--radius);padding:12px 16px;display:flex;flex-wrap:wrap;align-items:center;gap:10px">
+
+        <span style="color:#fff;font-size:13px;font-weight:600;margin-right:4px">Field Editor</span>
+
+        <!-- Quick-insert common fields -->
+        <select id="common-field-select" style="font-size:12px;padding:5px 8px;border-radius:5px;border:none;background:#fff;color:#1a2742;height:30px">
+          <option value="">— Insert common field —</option>
+          <option value="CLIENT_NAME">CLIENT_NAME</option>
+          <option value="CLIENT_EMAIL">CLIENT_EMAIL</option>
+          <option value="CLIENT_ADDRESS">CLIENT_ADDRESS</option>
+          <option value="COMPANY_NAME">COMPANY_NAME</option>
+          <option value="START_DATE">START_DATE</option>
+          <option value="END_DATE">END_DATE</option>
+          <option value="CONTRACT_VALUE">CONTRACT_VALUE</option>
+          <option value="PAYMENT_TERMS">PAYMENT_TERMS</option>
+          <option value="SCOPE_OF_WORK">SCOPE_OF_WORK</option>
+          <option value="GOVERNING_LAW">GOVERNING_LAW</option>
+          <option value="SIGNATURE_DATE">SIGNATURE_DATE</option>
+        </select>
+        <button type="button" class="btn btn-sm" id="insert-common-btn"
+          style="background:#3b82f6;color:#fff;border:none;height:30px;padding:0 12px;font-size:12px"
+          onclick="insertCommonField()">Insert at Cursor</button>
+
+        <div style="width:1px;height:24px;background:rgba(255,255,255,0.2)"></div>
+
+        <!-- Wrap selected text as custom field -->
+        <button type="button" class="btn btn-sm" id="wrap-sel-btn"
+          style="background:#059669;color:#fff;border:none;height:30px;padding:0 12px;font-size:12px"
+          onclick="wrapSelection()">✂ Wrap Selection as Field</button>
+
+        <div style="width:1px;height:24px;background:rgba(255,255,255,0.2)"></div>
+
+        <!-- Custom field name + insert -->
+        <input type="text" id="custom-field-name" placeholder="FIELD_NAME"
+          style="font-size:12px;padding:5px 8px;border-radius:5px;border:none;width:140px;height:30px;text-transform:uppercase"
+          oninput="this.value=this.value.replace(/[^A-Z0-9_]/gi,'').toUpperCase()">
+        <button type="button" class="btn btn-sm"
+          style="background:#7c3aed;color:#fff;border:none;height:30px;padding:0 12px;font-size:12px"
+          onclick="insertCustomField()">Insert Custom</button>
+
+        <div style="flex:1"></div>
+
+        <button type="button" id="save-fields-btn" class="btn btn-sm"
+          style="background:#16a34a;color:#fff;border:none;height:30px;padding:0 14px;font-size:12px;font-weight:600"
+          onclick="saveFields()">💾 Save Fields</button>
+        <button type="button" class="btn btn-sm"
+          style="background:rgba(255,255,255,0.15);color:#fff;border:none;height:30px;padding:0 12px;font-size:12px"
+          onclick="cancelEdit()">Cancel</button>
+      </div>
+      <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:0 0 var(--radius) var(--radius);padding:8px 14px;font-size:12px;color:#92400e">
+        💡 <strong>How to add fields:</strong>
+        Select any text in the document below → click <em>"Wrap Selection as Field"</em> and give it a name.
+        Or position your cursor and use <em>"Insert at Cursor"</em> to drop a placeholder directly.
+        Fields must be UPPERCASE with underscores, e.g. <code>{{CLIENT_NAME}}</code>.
+      </div>
+    </div>
+
+    <!-- Template content card -->
     <div class="card mb-4">
       <div class="card-header">
         <span class="card-title">Template Content</span>
-        <span class="text-sm text-muted">{{ template.content|length }} characters</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="text-sm text-muted" id="char-count">{{ template.content|length }} characters</span>
+          <button type="button" id="edit-fields-btn" class="btn btn-sm btn-secondary"
+            onclick="startEditFields()">✏️ Edit Fields</button>
+        </div>
       </div>
-      <div class="card-body">
-        <div class="contract-text docx-preview">{{ template.content | render_content }}</div>
+      <div class="card-body" style="padding:0">
+        <div id="doc-preview"
+          class="contract-text docx-preview"
+          style="border:none;border-radius:0;min-height:300px;outline:none">{{ template.content | render_content }}</div>
       </div>
     </div>
+
   </div>
 
   <!-- Sidebar -->
@@ -57,31 +126,258 @@
       </div>
     </div>
 
+    <!-- Fillable fields sidebar card -->
     <div class="card mb-4">
       <div class="card-header">
         <span class="card-title">Fillable Fields</span>
-        <span class="badge badge-version">{{ template.fields|length }}</span>
+        <span class="badge badge-version" id="field-count-badge">{{ template.fields|length }}</span>
       </div>
       <div class="card-body">
-        {% if template.fields %}
-        <div class="fields-list">
-          {% for f in template.fields %}
-          <span class="field-tag">{{'{{'}}{{ f }}{{'}}'}}</span>
-          {% endfor %}
+        <div id="fields-list-sidebar">
+          {% if template.fields %}
+          <div class="fields-list">
+            {% for f in template.fields %}
+            <span class="field-tag">&#123;&#123;{{ f }}&#125;&#125;</span>
+            {% endfor %}
+          </div>
+          <p class="text-xs text-muted mt-4">These fields will be filled in when creating a contract from this template.</p>
+          {% else %}
+          <div class="text-sm text-muted" id="no-fields-msg">
+            No fillable fields yet.<br>
+            Click <strong>✏️ Edit Fields</strong> above to add placeholders to your document.
+          </div>
+          {% endif %}
         </div>
-        <p class="text-xs text-muted mt-4">These fields will be filled in when creating a contract from this template.</p>
-        {% else %}
-        <div class="text-sm text-muted">
-          No fillable fields detected.<br>
-          Add <code>{{FIELD_NAME}}</code> markers to make fields dynamic.
-        </div>
-        {% endif %}
       </div>
     </div>
 
-    <a href="{{ url_for('contracts_new') }}?template_id={{ template.id }}" class="btn btn-primary" style="width:100%;justify-content:center">
+    <a href="{{ url_for('contracts_new') }}?template_id={{ template.id }}"
+       class="btn btn-primary" style="width:100%;justify-content:center">
       Create Contract from Template
     </a>
   </div>
+
 </div>
+
+<!-- Hidden CSRF token for AJAX -->
+<input type="hidden" id="csrf-token" value="{{ csrf_token() }}">
+
+<style>
+/* Edit mode highlight on the doc preview */
+#doc-preview.editing {
+  border: 2px dashed #3b82f6 !important;
+  border-radius: 0 !important;
+  background: #f0f7ff !important;
+  cursor: text;
+}
+/* Field placeholder chips inside the editor */
+#doc-preview .field-chip {
+  display: inline-block;
+  background: #fef9c3;
+  border: 1px solid #fde68a;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-weight: 700;
+  color: #92400e;
+  font-family: monospace;
+  font-size: 0.92em;
+  cursor: default;
+  white-space: nowrap;
+}
+</style>
+
+<script>
+const SAVE_URL = "{{ url_for('templates_update_fields', template_id=template.id) }}";
+const CSRF    = document.getElementById('csrf-token').value;
+const preview = document.getElementById('doc-preview');
+
+// ── Saved cursor position helpers (contenteditable) ─────────────────────────
+let savedRange = null;
+
+function saveRange() {
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0 && preview.contains(sel.anchorNode)) {
+    savedRange = sel.getRangeAt(0).cloneRange();
+  }
+}
+
+function restoreRange() {
+  if (!savedRange) return;
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(savedRange);
+  preview.focus();
+}
+
+// ── Start / cancel edit mode ────────────────────────────────────────────────
+function startEditFields() {
+  preview.contentEditable = 'true';
+  preview.classList.add('editing');
+  document.getElementById('field-editor-bar').style.display = 'block';
+  document.getElementById('edit-fields-btn').style.display  = 'none';
+  preview.focus();
+}
+
+function cancelEdit() {
+  preview.contentEditable = 'false';
+  preview.classList.remove('editing');
+  document.getElementById('field-editor-bar').style.display = 'none';
+  document.getElementById('edit-fields-btn').style.display  = '';
+}
+
+// ── Insert a {{FIELD_NAME}} chip at the current cursor position ──────────────
+function insertFieldChip(name) {
+  name = name.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+  if (!name) return;
+  preview.focus();
+  restoreRange();
+
+  const chip = document.createElement('span');
+  chip.className   = 'field-chip';
+  chip.textContent = '{{' + name + '}}';
+
+  const sel = window.getSelection();
+  if (sel && sel.rangeCount > 0 && preview.contains(sel.anchorNode)) {
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    range.insertNode(chip);
+    // Move cursor after the chip
+    const after = document.createRange();
+    after.setStartAfter(chip);
+    after.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(after);
+  } else {
+    preview.appendChild(chip);
+  }
+  savedRange = null;
+  updateFieldBadge();
+}
+
+function insertCommonField() {
+  const sel = document.getElementById('common-field-select');
+  if (!sel.value) { alert('Please choose a field from the dropdown first.'); return; }
+  insertFieldChip(sel.value);
+  sel.value = '';
+}
+
+function insertCustomField() {
+  const inp = document.getElementById('custom-field-name');
+  if (!inp.value.trim()) { alert('Enter a field name first (e.g. PAYMENT_TERMS).'); return; }
+  insertFieldChip(inp.value);
+  inp.value = '';
+}
+
+// ── Wrap selected text as a {{FIELD_NAME}} ──────────────────────────────────
+function wrapSelection() {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || !preview.contains(sel.anchorNode)) {
+    alert('Please select some text in the document first, then click "Wrap Selection as Field".');
+    return;
+  }
+
+  // Suggest a field name from the selected text
+  const selectedText = sel.toString().trim()
+    .toUpperCase().replace(/\s+/g, '_').replace(/[^A-Z0-9_]/g, '').slice(0, 40);
+
+  const fieldName = prompt(
+    'Enter a name for this field (UPPERCASE, underscores only):\n\nExample: CLIENT_NAME, START_DATE, CONTRACT_VALUE',
+    selectedText || ''
+  );
+  if (!fieldName) return;
+
+  const name = fieldName.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+  if (!name) { alert('Invalid field name.'); return; }
+
+  const range = sel.getRangeAt(0);
+  range.deleteContents();
+
+  const chip = document.createElement('span');
+  chip.className   = 'field-chip';
+  chip.textContent = '{{' + name + '}}';
+  range.insertNode(chip);
+
+  sel.removeAllRanges();
+  updateFieldBadge();
+}
+
+// ── Track cursor so toolbar buttons can restore it ──────────────────────────
+preview.addEventListener('mouseup',  saveRange);
+preview.addEventListener('keyup',    saveRange);
+preview.addEventListener('touchend', saveRange);
+
+// Prevent toolbar buttons from losing the selection before we act
+document.getElementById('field-editor-bar')?.addEventListener('mousedown', function(e) {
+  const tag = e.target.tagName;
+  if (tag === 'BUTTON' || tag === 'SELECT') {
+    // Don't blur the contenteditable (which would drop the selection)
+    e.preventDefault();
+  }
+});
+
+// ── Refresh field count badge from current doc content ─────────────────────
+function updateFieldBadge() {
+  const html = preview.innerHTML;
+  const matches = [...html.matchAll(/\{\{([A-Z][A-Z0-9_]*)\}\}/g)];
+  const unique  = [...new Set(matches.map(m => m[1]))];
+
+  document.getElementById('field-count-badge').textContent = unique.length;
+
+  const sidebar = document.getElementById('fields-list-sidebar');
+  if (unique.length === 0) {
+    sidebar.innerHTML = '<div class="text-sm text-muted">No fillable fields yet.<br>Click <strong>✏️ Edit Fields</strong> above to add placeholders.</div>';
+  } else {
+    sidebar.innerHTML = '<div class="fields-list">' +
+      unique.map(f => `<span class="field-tag">&#123;&#123;${f}&#125;&#125;</span>`).join('') +
+      '</div><p class="text-xs text-muted mt-4">These fields will be filled in when creating a contract.</p>';
+  }
+}
+
+// ── Save fields to the server ───────────────────────────────────────────────
+async function saveFields() {
+  const btn = document.getElementById('save-fields-btn');
+  btn.textContent = 'Saving…';
+  btn.disabled    = true;
+
+  // Get the current innerHTML of the editor.
+  // Replace visual chip spans with raw {{FIELD_NAME}} text so the server sees
+  // the same plain markers whether the content is HTML or plain text.
+  const clone = preview.cloneNode(true);
+  clone.querySelectorAll('.field-chip').forEach(chip => {
+    chip.replaceWith(document.createTextNode(chip.textContent));
+  });
+  const content = clone.innerHTML;
+
+  try {
+    const body = new URLSearchParams({ content, csrf_token: CSRF });
+    const res  = await fetch(SAVE_URL, { method: 'POST', body });
+    const data = await res.json();
+
+    if (data.ok) {
+      // Refresh the sidebar badge from the server response
+      const sidebar = document.getElementById('fields-list-sidebar');
+      document.getElementById('field-count-badge').textContent = data.fields.length;
+      if (data.fields.length) {
+        sidebar.innerHTML = '<div class="fields-list">' +
+          data.fields.map(f => `<span class="field-tag">&#123;&#123;${f}&#125;&#125;</span>`).join('') +
+          '</div><p class="text-xs text-muted mt-4">These fields will be filled in when creating a contract.</p>';
+      }
+      cancelEdit();
+      // Flash success inline
+      const bar = document.createElement('div');
+      bar.style = 'position:fixed;top:16px;right:16px;background:#16a34a;color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.15)';
+      bar.textContent = '✓ Fields saved successfully';
+      document.body.appendChild(bar);
+      setTimeout(() => bar.remove(), 3000);
+    } else {
+      alert('Error saving: ' + (data.error || 'Unknown error'));
+    }
+  } catch (err) {
+    alert('Network error — please try again.');
+  }
+
+  btn.textContent = '💾 Save Fields';
+  btn.disabled    = false;
+}
+</script>
 {% endblock %}

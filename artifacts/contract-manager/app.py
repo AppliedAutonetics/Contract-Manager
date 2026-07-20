@@ -703,6 +703,25 @@ def templates_edit(template_id):
     return render_template('templates/new.html', template=template)
 
 
+@app.route('/templates/<int:template_id>/update-fields', methods=['POST'])
+@login_required
+def templates_update_fields(template_id):
+    """AJAX endpoint — saves the edited HTML content (with field markers) back to the template."""
+    template = ContractTemplate.query.get_or_404(template_id)
+    if template.created_by != current_user.id:
+        abort(403)
+    content = request.form.get('content', '').strip()
+    if not content:
+        return jsonify({'ok': False, 'error': 'Content cannot be empty'}), 400
+    template.content = content
+    template.fields = extract_template_fields(content)
+    template.updated_at = datetime.utcnow()
+    log_action('update_template', 'template', template.id,
+               details=f'Updated fields via field editor: {template.name}')
+    db.session.commit()
+    return jsonify({'ok': True, 'fields': template.fields})
+
+
 @app.route('/templates/<int:template_id>/delete', methods=['POST'])
 @login_required
 def templates_delete(template_id):
