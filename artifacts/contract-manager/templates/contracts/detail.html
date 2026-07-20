@@ -10,6 +10,10 @@
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
     PDF
   </a>
+  <a href="{{ url_for('contracts_docx', contract_id=contract.id) }}" class="btn btn-secondary" title="Download Word Document">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+    DOCX
+  </a>
   <a href="{{ url_for('revisions_new', contract_id=contract.id) }}" class="btn btn-primary">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     Add Revision
@@ -102,6 +106,7 @@
             </div>
             <div class="revision-actions">
               <a href="{{ url_for('contracts_pdf', contract_id=contract.id, revision_id=rev.id) }}" class="btn btn-ghost btn-sm" title="Download PDF">PDF</a>
+              <a href="{{ url_for('contracts_docx', contract_id=contract.id, revision_id=rev.id) }}" class="btn btn-ghost btn-sm" title="Download Word Doc">DOCX</a>
               {% if not rev.is_finalized and contract.status != 'finalized' %}
               <form method="POST" action="{{ url_for('contracts_finalize', contract_id=contract.id) }}" style="display:inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -169,6 +174,9 @@
           {% endif %}
           <a href="{{ url_for('contracts_pdf', contract_id=contract.id) }}" class="btn btn-secondary" style="justify-content:center">
             📄 Download PDF
+          </a>
+          <a href="{{ url_for('contracts_docx', contract_id=contract.id) }}" class="btn btn-secondary" style="justify-content:center">
+            📝 Download Word (.docx)
           </a>
           <a href="{{ url_for('revisions_new', contract_id=contract.id) }}" class="btn btn-primary" style="justify-content:center">
             + Upload Revision

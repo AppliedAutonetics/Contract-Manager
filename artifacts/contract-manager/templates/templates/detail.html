@@ -210,19 +210,62 @@ function restoreRange() {
 }
 
 // ── Start / cancel edit mode ────────────────────────────────────────────────
+let _originalHTML = '';  // snapshot before editing so Cancel can fully revert
+
 function startEditFields() {
+  _originalHTML = preview.innerHTML;   // save baseline for Cancel
   preview.contentEditable = 'true';
   preview.classList.add('editing');
   document.getElementById('field-editor-bar').style.display = 'block';
   document.getElementById('edit-fields-btn').style.display  = 'none';
+  // Convert any bare {{FIELD_NAME}} text already in the document into visual
+  // chip spans so the user can see and manage them in the editor.
+  _convertTextToChips(preview);
+  updateFieldBadge();
   preview.focus();
 }
 
 function cancelEdit() {
+  preview.innerHTML = _originalHTML;   // fully revert to pre-edit snapshot
   preview.contentEditable = 'false';
   preview.classList.remove('editing');
   document.getElementById('field-editor-bar').style.display = 'none';
   document.getElementById('edit-fields-btn').style.display  = '';
+}
+
+// Walk text nodes and wrap {{FIELD_NAME}} occurrences in .field-chip spans.
+function _convertTextToChips(root) {
+  // Collect text nodes first to avoid modifying the tree while iterating.
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      // Skip nodes already inside a chip
+      if (node.parentElement && node.parentElement.classList.contains('field-chip')) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      return /\{\{[A-Z_][A-Z0-9_]*\}\}/.test(node.nodeValue)
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_SKIP;
+    }
+  });
+  const textNodes = [];
+  let n;
+  while ((n = walker.nextNode())) textNodes.push(n);
+
+  textNodes.forEach(node => {
+    const pattern = /\{\{([A-Z_][A-Z0-9_]*)\}\}/g;
+    const frag = document.createDocumentFragment();
+    let text = node.nodeValue, last = 0, m;
+    while ((m = pattern.exec(text)) !== null) {
+      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const chip = document.createElement('span');
+      chip.className   = 'field-chip';
+      chip.textContent = m[0];
+      frag.appendChild(chip);
+      last = pattern.lastIndex;
+    }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  });
 }
 
 // ── Insert a {{FIELD_NAME}} chip at the current cursor position ──────────────
@@ -354,6 +397,10 @@ async function saveFields() {
     const data = await res.json();
 
     if (data.ok) {
+      // Update the baseline so Cancel would restore the newly saved content
+      // (chips already stripped from clone, stored back as plain text).
+      _originalHTML = clone.innerHTML;
+
       // Refresh the sidebar badge from the server response
       const sidebar = document.getElementById('fields-list-sidebar');
       document.getElementById('field-count-badge').textContent = data.fields.length;
@@ -361,6 +408,8 @@ async function saveFields() {
         sidebar.innerHTML = '<div class="fields-list">' +
           data.fields.map(f => `<span class="field-tag">&#123;&#123;${f}&#125;&#125;</span>`).join('') +
           '</div><p class="text-xs text-muted mt-4">These fields will be filled in when creating a contract.</p>';
+      } else {
+        sidebar.innerHTML = '<div class="text-sm text-muted">No fillable fields. Add <code>{{PLACEHOLDER}}</code> markers in the editor.</div>';
       }
       cancelEdit();
       // Flash success inline

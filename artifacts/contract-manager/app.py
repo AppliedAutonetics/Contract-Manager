@@ -25,6 +25,10 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 # Word doc handling
 try:
     from docx import Document as DocxDocument
+    from docx.shared import Pt, Inches, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
     DOCX_AVAILABLE = True
 except ImportError:
     DOCX_AVAILABLE = False
@@ -42,6 +46,28 @@ try:
     XHTML2PDF_AVAILABLE = True
 except ImportError:
     XHTML2PDF_AVAILABLE = False
+
+# BeautifulSoup: HTML parsing for DOCX export
+try:
+    from bs4 import BeautifulSoup, NavigableString, Tag
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
+
+# Mammoth style map: preserves heading levels and inline formatting from Word
+MAMMOTH_STYLE_MAP = """
+p[style-name='Heading 1'] => h1:fresh
+p[style-name='Heading 2'] => h2:fresh
+p[style-name='Heading 3'] => h3:fresh
+p[style-name='Heading 4'] => h4:fresh
+p[style-name='Heading 5'] => h5:fresh
+p[style-name='Title'] => h1:fresh
+p[style-name='Subtitle'] => h2:fresh
+b => strong
+i => em
+u => u
+strike => s
+"""
 
 app = Flask(__name__)
 
@@ -168,7 +194,13 @@ def extract_text_from_file(file_path, filename):
         elif ext in ('docx', 'doc'):
             if MAMMOTH_AVAILABLE:
                 with open(file_path, 'rb') as f:
-                    result = mammoth.convert_to_html(f)
+                    result = mammoth.convert_to_html(
+                        f,
+                        style_map=MAMMOTH_STYLE_MAP,
+                        convert_image=mammoth.images.inline(
+                            lambda image: {'src': ''}  # strip images — not needed in contract text
+                        )
+                    )
                 return result.value  # HTML string
             elif DOCX_AVAILABLE:
                 doc = DocxDocument(file_path)
@@ -369,8 +401,14 @@ def _generate_pdf_html(contract, html_body, revision=None):
   .content h1 {{ font-size: 14pt; color: #1a2742; }}
   .content h2 {{ font-size: 12pt; color: #1a2742; }}
   .content h3 {{ font-size: 11pt; color: #1a2742; }}
-  .content table {{ border-collapse: collapse; width: 100%; margin: 8px 0; }}
-  .content table td, .content table th {{ border: 1px solid #e2e8f0; padding: 5px 8px; }}
+  .content table {{ border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.5pt; }}
+  .content table td, .content table th {{ border: 1px solid #374151; padding: 5px 8px; vertical-align: top; word-wrap: break-word; }}
+  .content table th {{ font-weight: bold; background: #f8fafc; color: #1a2742; }}
+  .content table tr:nth-child(even) td {{ background: #f8fafc; }}
+  .content ul, .content ol {{ margin: 4px 0 8px 20px; padding: 0; }}
+  .content li {{ margin-bottom: 3px; line-height: 1.5; }}
+  .content strong, .content b {{ font-weight: bold; }}
+  .content em, .content i {{ font-style: italic; }}
   .footer {{ border-top: 1px solid #e2e8f0; margin-top: 32px; padding-top: 6px;
              text-align: center; font-size: 8.5pt; color: #64748b; }}
 </style>
@@ -425,6 +463,215 @@ def _generate_pdf_html(contract, html_body, revision=None):
                 story.append(Spacer(1, 8))
         fb_doc.build(story)
 
+    buf.seek(0)
+    return buf
+
+
+def _add_inline_to_para(para, node):
+    """Recursively add inline HTML content (bold, italic, text) to a docx paragraph."""
+    if isinstance(node, NavigableString):
+        text = str(node)
+        if text:
+            para.add_run(text)
+        return
+    tag = node.name.lower() if node.name else ''
+    if tag in ('strong', 'b'):
+        run = para.add_run(node.get_text())
+        run.bold = True
+    elif tag in ('em', 'i'):
+        run = para.add_run(node.get_text())
+        run.italic = True
+    elif tag == 'u':
+        run = para.add_run(node.get_text())
+        run.underline = True
+    elif tag == 'br':
+        para.add_run().add_break()
+    elif tag in ('span', 'a', 'code', 'sup', 'sub'):
+        for child in node.children:
+            _add_inline_to_para(para, child)
+    elif node.name:
+        # Any other element — recurse
+        for child in node.children:
+            _add_inline_to_para(para, child)
+
+
+def _html_to_docx_body(doc, html_content):
+    """Parse an HTML fragment and append its content to a python-docx Document."""
+    if not BS4_AVAILABLE:
+        # Fallback: strip tags and add as plain text paragraphs
+        import html as html_lib
+        plain = re.sub(r'<[^>]+>', ' ', html_content)
+        plain = html_lib.unescape(plain)
+        for para in plain.split('\n'):
+            para = para.strip()
+            if para:
+                doc.add_paragraph(para)
+        return
+
+    soup = BeautifulSoup(html_content, 'lxml')
+    body = soup.find('body') or soup
+
+    for element in body.children:
+        if isinstance(element, NavigableString):
+            text = str(element).strip()
+            if text:
+                doc.add_paragraph(text)
+            continue
+        if not isinstance(element, Tag):
+            continue
+        tag = element.name.lower()
+
+        if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
+            level = int(tag[1])
+            doc.add_heading(element.get_text(strip=True), level=level)
+
+        elif tag == 'p':
+            para = doc.add_paragraph()
+            for child in element.children:
+                _add_inline_to_para(para, child)
+
+        elif tag in ('ul', 'ol'):
+            style = 'List Bullet' if tag == 'ul' else 'List Number'
+            for li in element.find_all('li', recursive=False):
+                para = doc.add_paragraph(style=style)
+                for child in li.children:
+                    _add_inline_to_para(para, child)
+
+        elif tag == 'table':
+            rows_html = element.find_all('tr')
+            if not rows_html:
+                continue
+            max_cols = max((len(r.find_all(['td', 'th'])) for r in rows_html), default=0)
+            if max_cols == 0:
+                continue
+            tbl = doc.add_table(rows=len(rows_html), cols=max_cols)
+            tbl.style = 'Table Grid'
+            for ri, row_el in enumerate(rows_html):
+                cells_html = row_el.find_all(['td', 'th'])
+                for ci, cell_el in enumerate(cells_html):
+                    if ci >= max_cols:
+                        break
+                    cell = tbl.cell(ri, ci)
+                    cell.text = ''
+                    para = cell.paragraphs[0]
+                    for child in cell_el.children:
+                        _add_inline_to_para(para, child)
+                    if cell_el.name == 'th':
+                        for run in para.runs:
+                            run.bold = True
+
+        elif tag in ('div', 'section', 'article', 'blockquote'):
+            # Recurse — treat as a container
+            _html_to_docx_body(doc, str(element.decode_contents()))
+
+        elif tag == 'hr':
+            doc.add_paragraph('─' * 60)
+
+        elif tag in ('br',):
+            doc.add_paragraph()
+
+        # Skip: script, style, head, etc.
+
+
+def generate_docx(contract, revision=None):
+    """Generate a Word (.docx) file from a contract, preserving formatting."""
+    if not DOCX_AVAILABLE:
+        return None
+
+    doc = DocxDocument()
+
+    # Page margins
+    for section in doc.sections:
+        section.left_margin   = Inches(1)
+        section.right_margin  = Inches(1)
+        section.top_margin    = Inches(1)
+        section.bottom_margin = Inches(1)
+
+    # ── Header ──────────────────────────────────────────────────────────────
+    title_para = doc.add_heading(contract.title, level=0)
+    title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    num_para = doc.add_paragraph(f'Contract #{contract.contract_number}')
+    num_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for run in num_para.runs:
+        run.font.color.rgb = RGBColor(0x64, 0x74, 0x8b)
+        run.font.size = Pt(10)
+
+    if revision:
+        ver_label = f'Version {revision.version_number}' + (' — FINAL' if revision.is_finalized else '')
+        ver_para = doc.add_paragraph(ver_label)
+        ver_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # Horizontal rule via paragraph border
+    hr_para = doc.add_paragraph()
+    pPr = hr_para._p.get_or_add_pPr()
+    pBdr = OxmlElement('w:pBdr')
+    bottom = OxmlElement('w:bottom')
+    bottom.set(qn('w:val'), 'single')
+    bottom.set(qn('w:sz'), '6')
+    bottom.set(qn('w:space'), '1')
+    bottom.set(qn('w:color'), '1a2742')
+    pBdr.append(bottom)
+    pPr.append(pBdr)
+
+    # ── Metadata table ───────────────────────────────────────────────────────
+    status_map = {
+        'draft': 'Draft', 'in_review': 'In Review', 'approved': 'Approved',
+        'finalized': 'Finalized', 'expired': 'Expired'
+    }
+    meta_rows = [
+        ('Client', contract.client.name, 'Status', status_map.get(contract.status, contract.status)),
+        ('Created', contract.created_at.strftime('%B %d, %Y'), 'Created By', contract.creator.full_name),
+    ]
+    if contract.start_date:
+        end = contract.end_date.strftime('%B %d, %Y') if contract.end_date else 'N/A'
+        meta_rows.append(('Start Date', contract.start_date.strftime('%B %d, %Y'), 'End Date', end))
+    if contract.value:
+        meta_rows.append(('Contract Value', f'${float(contract.value):,.2f}', '', ''))
+
+    meta_tbl = doc.add_table(rows=len(meta_rows), cols=4)
+    meta_tbl.style = 'Table Grid'
+    for ri, (l1, v1, l2, v2) in enumerate(meta_rows):
+        row = meta_tbl.rows[ri]
+        for ci, text in enumerate((l1, v1, l2, v2)):
+            cell = row.cells[ci]
+            cell.text = text
+            if ci in (0, 2) and text:
+                for run in cell.paragraphs[0].runs:
+                    run.bold = True
+                    run.font.color.rgb = RGBColor(0x1a, 0x27, 0x42)
+
+    doc.add_paragraph()  # spacer
+
+    # ── Contract content ─────────────────────────────────────────────────────
+    content = ''
+    if revision:
+        content = revision.content
+    elif contract.latest_revision:
+        content = contract.latest_revision.content
+
+    if content:
+        if is_html_content(content):
+            _html_to_docx_body(doc, content)
+        else:
+            for para_text in content.split('\n\n'):
+                para_text = para_text.strip()
+                if para_text:
+                    doc.add_paragraph(para_text)
+
+    # ── Footer ───────────────────────────────────────────────────────────────
+    doc.add_paragraph()
+    footer_text = f'Generated on {datetime.utcnow().strftime("%B %d, %Y at %H:%M UTC")}'
+    if contract.finalized_at:
+        footer_text += f'  |  Finalized {contract.finalized_at.strftime("%B %d, %Y")}'
+    footer_para = doc.add_paragraph(footer_text)
+    footer_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for run in footer_para.runs:
+        run.font.color.rgb = RGBColor(0x64, 0x74, 0x8b)
+        run.font.size = Pt(9)
+
+    buf = BytesIO()
+    doc.save(buf)
     buf.seek(0)
     return buf
 
@@ -1109,6 +1356,45 @@ def contracts_pdf(contract_id):
 
     return send_file(pdf_buffer, as_attachment=True, download_name=filename,
                      mimetype='application/pdf')
+
+
+@app.route('/contracts/<int:contract_id>/docx')
+@login_required
+def contracts_docx(contract_id):
+    contract = Contract.query.filter_by(id=contract_id, created_by=current_user.id).first_or_404()
+    revision_id = request.args.get('revision_id', type=int)
+    if revision_id:
+        revision = ContractRevision.query.get_or_404(revision_id)
+        if revision.contract_id != contract_id:
+            abort(403)
+    else:
+        revision = contract.latest_revision
+
+    if not DOCX_AVAILABLE:
+        flash('Word document export is not available (python-docx not installed).', 'error')
+        return redirect(url_for('contracts_detail', contract_id=contract_id))
+
+    docx_buffer = generate_docx(contract, revision)
+    if not docx_buffer:
+        flash('Could not generate Word document.', 'error')
+        return redirect(url_for('contracts_detail', contract_id=contract_id))
+
+    safe_title = re.sub(r'[^\w\s-]', '', contract.title).strip().replace(' ', '_')
+    filename = f'{contract.contract_number}_{safe_title}'
+    if revision:
+        filename += f'_v{revision.version_number}'
+    filename += '.docx'
+
+    log_action('export_docx', 'contract', contract.id, contract_id=contract.id,
+               details=f'Exported DOCX for contract: {contract.title}')
+    db.session.commit()
+
+    return send_file(
+        docx_buffer,
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    )
 
 
 @app.route('/contracts/<int:contract_id>/status', methods=['POST'])

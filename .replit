@@ -42,5 +42,5 @@ expertMode = true
 
     [nix]
     channel = "stable-25_05"
-packages = ["freetype", "glibcLocales"]
+packages = ["freetype", "glibcLocales", "xcodebuild", "zlib"]
     
