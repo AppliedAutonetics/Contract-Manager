@@ -175,16 +175,44 @@ def allowed_file(filename):
 
 
 def fix_split_placeholders(html):
-    """Strip HTML tags that mammoth may have inserted inside {{...}} placeholders.
+    """Strip HTML tags that Word/mammoth may have inserted inside {{...}} placeholders.
 
-    When Word stores a placeholder like {{CLIENT_NAME}} as multiple runs with
-    mixed formatting, mammoth wraps each run separately, producing things like
-    {{<strong>CLIENT</strong>_NAME}} that the regex cannot match.  This step
-    strips any inline tags found between {{ and }} so the markers are clean.
+    Word sometimes stores a placeholder like {{CLIENT_NAME}} as multiple runs
+    with mixed formatting, so mammoth wraps each run separately and produces
+    things like {{<strong>CLIENT</strong>_NAME}}.  This step strips inline tags
+    found between {{ and }} so the markers are clean.
+
+    It also normalises HTML-entity-encoded braces (&#123;&#123; → {{) and stops
+    at block-level tag boundaries so it never accidentally merges content across
+    separate table cells or paragraphs.
     """
+    if not html:
+        return html
+
+    # Normalise HTML-encoded {{ and }}
+    html = html.replace('&#123;&#123;', '{{').replace('&#125;&#125;', '}}')
+    html = html.replace('&lbrace;&lbrace;', '{{').replace('&rbrace;&rbrace;', '}}')
+    html = html.replace('&#x7B;&#x7B;', '{{').replace('&#x7D;&#x7D;', '}}')
+
+    if '{{' not in html:
+        return html
+
+    _BLOCK_STOP = re.compile(
+        r'</?(?:p|div|td|th|tr|li|h[1-6]|table|blockquote|section|article)\b',
+        re.IGNORECASE,
+    )
+
+    def _replacer(m):
+        content = m.group(1)
+        # Don't merge if there's a block-level boundary inside the match
+        if _BLOCK_STOP.search(content):
+            return m.group(0)
+        cleaned = re.sub(r'<[^>]+>', '', content).strip()
+        return '{{' + cleaned + '}}'
+
     return re.sub(
         r'\{\{((?:[^{}]|<[^>]+>)*?)\}\}',
-        lambda m: '{{' + re.sub(r'<[^>]+>', '', m.group(1)).strip() + '}}',
+        _replacer,
         html,
         flags=re.DOTALL,
     )
@@ -246,40 +274,259 @@ def is_html_content(content):
     return bool(content and content.strip().startswith('<'))
 
 
+def _docx_to_html(file_path):
+    """Convert a .docx to HTML with full inline CSS (colors, sizes, alignment).
+
+    Uses python-docx directly to read the Word XML so that run-level formatting
+    (text color, font size, bold/italic/underline) and paragraph-level formatting
+    (alignment, spacing, indentation) are preserved as inline CSS rather than
+    being discarded.  Returns an HTML string.
+    """
+    import html as _hl
+
+    try:
+        from docx import Document as _Doc
+        from docx.text.paragraph import Paragraph as _Para
+        from docx.table import Table as _Tbl
+    except ImportError:
+        return None  # caller will fall back to mammoth
+
+    try:
+        doc = _Doc(file_path)
+    except Exception as e:
+        return f'<p>[Could not open Word document: {_hl.escape(str(e))}]</p>'
+
+    _H_STYLES = {
+        'heading 1': 'h1', 'heading 2': 'h2', 'heading 3': 'h3',
+        'heading 4': 'h4', 'heading 5': 'h5', 'heading 6': 'h6',
+        'title': 'h1', 'subtitle': 'h2',
+    }
+
+    def _run_html(run):
+        text = _hl.escape(run.text or '')
+        if not text:
+            return ''
+
+        span_styles = []
+
+        # Text colour
+        try:
+            if run.font.color and run.font.color.type is not None:
+                rgb = str(run.font.color.rgb)   # e.g. '1A2742'
+                span_styles.append(f'color:#{rgb.lower()}')
+        except Exception:
+            pass
+
+        # Font size
+        try:
+            if run.font.size:
+                pts = run.font.size.pt
+                if pts:
+                    span_styles.append(f'font-size:{pts:.1f}pt')
+        except Exception:
+            pass
+
+        # Font family (skip common defaults to keep HTML clean)
+        try:
+            fname = run.font.name
+            if fname and fname.strip() not in ('', 'Calibri', 'Arial', 'Times New Roman',
+                                               'Cambria', 'Calibri Light'):
+                span_styles.append(f"font-family:'{_hl.escape(fname)}',sans-serif")
+        except Exception:
+            pass
+
+        # Semantic inline tags
+        if run.bold:      text = f'<strong>{text}</strong>'
+        if run.italic:    text = f'<em>{text}</em>'
+        if run.underline: text = f'<u>{text}</u>'
+        try:
+            if run.font.strike: text = f'<s>{text}</s>'
+        except Exception:
+            pass
+        try:
+            if run.font.superscript: text = f'<sup>{text}</sup>'
+            elif run.font.subscript: text = f'<sub>{text}</sub>'
+        except Exception:
+            pass
+
+        if span_styles:
+            text = f'<span style="{";".join(span_styles)}">{text}</span>'
+
+        return text
+
+    def _para_styles(para):
+        """Return (tag, style_attr, list_type_or_None)."""
+        sname = (para.style.name or 'Normal').strip().lower()
+        tag = _H_STYLES.get(sname, 'p')
+
+        pstyles = []
+        pf = para.paragraph_format
+
+        # Alignment
+        try:
+            from docx.enum.text import WD_ALIGN_PARAGRAPH as _WDA
+            _amap = {_WDA.CENTER: 'center', _WDA.RIGHT: 'right', _WDA.JUSTIFY: 'justify'}
+            a = _amap.get(pf.alignment)
+            if a:
+                pstyles.append(f'text-align:{a}')
+        except Exception:
+            pass
+
+        # Vertical spacing
+        try:
+            if pf.space_before and pf.space_before.pt:
+                pstyles.append(f'margin-top:{pf.space_before.pt:.0f}pt')
+            if pf.space_after and pf.space_after.pt:
+                pstyles.append(f'margin-bottom:{pf.space_after.pt:.0f}pt')
+        except Exception:
+            pass
+
+        # Indentation
+        try:
+            if pf.left_indent and pf.left_indent.inches and pf.left_indent.inches > 0:
+                pstyles.append(f'padding-left:{pf.left_indent.inches:.3f}in')
+        except Exception:
+            pass
+
+        style_attr = f' style="{";".join(pstyles)}"' if pstyles else ''
+
+        # List detection
+        list_type = None
+        try:
+            W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+            numPr = para._element.find(f'{{{W}}}pPr/{{{W}}}numPr')
+            if numPr is not None:
+                # Try to determine bullet vs numbered from abstract num
+                ilvl = numPr.find(f'{{{W}}}ilvl')
+                numId = numPr.find(f'{{{W}}}numId')
+                if numId is not None and numId.get(f'{{{W}}}val', '0') != '0':
+                    # Heuristic: styles with "number" are numbered lists
+                    list_type = 'number' if 'number' in sname else 'bullet'
+        except Exception:
+            pass
+        if list_type is None:
+            if 'list bullet' in sname:   list_type = 'bullet'
+            elif 'list number' in sname: list_type = 'number'
+
+        return tag, style_attr, list_type
+
+    def _para_html(para, force_tag=None, style_attr=None):
+        if style_attr is None:
+            tag, style_attr, _ = _para_styles(para)
+        else:
+            tag = force_tag or 'p'
+        inner = ''.join(_run_html(r) for r in para.runs)
+        if not inner.strip():
+            return f'<{tag}{style_attr}><br></{tag}>'
+        return f'<{tag}{style_attr}>{inner}</{tag}>'
+
+    def _table_html(table):
+        rows = []
+        for ri, row in enumerate(table.rows):
+            cells_html = []
+            seen_ids = set()
+            for cell in row.cells:
+                cid = id(cell._tc)
+                if cid in seen_ids:
+                    continue        # skip merged duplicates
+                seen_ids.add(cid)
+                ctag = 'th' if ri == 0 else 'td'
+                inner = '\n'.join(_para_html(p) for p in cell.paragraphs)
+                cells_html.append(f'<{ctag}>{inner}</{ctag}>')
+            rows.append(f'<tr>{"".join(cells_html)}</tr>')
+        return f'<table>{"".join(rows)}</table>'
+
+    # Walk the body in document order, grouping consecutive list paragraphs
+    parts = []
+    pending_list = []       # list of (list_type, para, style_attr) tuples
+    pending_list_type = None
+
+    def flush_list():
+        nonlocal pending_list, pending_list_type
+        if not pending_list:
+            return
+        ltag = 'ul' if pending_list_type == 'bullet' else 'ol'
+        items = ['<li>' + ''.join(_run_html(r) for r in lp.runs) + '</li>'
+                 for (_, lp, _) in pending_list]
+        parts.append(f'<{ltag}>{"".join(items)}</{ltag}>\n')
+        pending_list = []
+        pending_list_type = None
+
+    W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    for child in doc.element.body:
+        local = child.tag.split('}')[-1] if '}' in child.tag else child.tag
+
+        if local == 'p':
+            para = _Para(child, doc)
+            tag, style_attr, list_type = _para_styles(para)
+
+            if list_type:
+                if list_type != pending_list_type and pending_list:
+                    flush_list()
+                pending_list_type = list_type
+                pending_list.append((list_type, para, style_attr))
+            else:
+                flush_list()
+                parts.append(_para_html(para, tag, style_attr) + '\n')
+
+        elif local == 'tbl':
+            flush_list()
+            try:
+                table = _Tbl(child, doc)
+                parts.append(_table_html(table) + '\n')
+            except Exception as te:
+                parts.append(f'<p>[Table render error: {_hl.escape(str(te))}]</p>\n')
+
+    flush_list()
+    html = ''.join(parts)
+    # Fix any placeholders Word split across runs
+    return fix_split_placeholders(html)
+
+
 def extract_text_from_file(file_path, filename):
     """Extract content from an uploaded file.
 
-    For .docx files mammoth is preferred because it converts the document to
-    HTML, preserving bold, italic, headings, tables and lists.  The returned
-    string is an HTML fragment when mammoth is used, plain text otherwise.
+    For .docx files the python-docx converter is used first because it
+    produces HTML with full inline CSS (colours, font sizes, alignment).
+    Mammoth is kept as a fallback for files that python-docx can't open.
+    The returned string is an HTML fragment; plain text for .txt files.
     """
     ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
     try:
         if ext == 'txt':
             with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                 return f.read()
+
         elif ext in ('docx', 'doc'):
+            # ── Primary: python-docx with full formatting ────────────────────
+            if DOCX_AVAILABLE:
+                html = _docx_to_html(file_path)
+                if html and not html.startswith('<p>['):   # not an error result
+                    return html
+
+            # ── Fallback: mammoth (structural HTML, no colours) ──────────────
             if MAMMOTH_AVAILABLE:
                 with open(file_path, 'rb') as f:
                     result = mammoth.convert_to_html(
                         f,
                         style_map=MAMMOTH_STYLE_MAP,
                         convert_image=mammoth.images.inline(
-                            lambda image: {'src': ''}  # omit images — contract text only
+                            lambda image: {'src': ''}
                         ),
                     )
-                html = result.value
-                # Clean up any {{FIELD_NAME}} placeholders that mammoth may have
-                # split across multiple inline-formatting runs.
-                html = fix_split_placeholders(html)
+                html = fix_split_placeholders(result.value)
                 return html
-            elif DOCX_AVAILABLE:
+
+            # ── Last resort: plain text via python-docx ──────────────────────
+            if DOCX_AVAILABLE:
                 doc = DocxDocument(file_path)
-                return '\n'.join([para.text for para in doc.paragraphs])
-            else:
-                return '[Word document uploaded but python-docx / mammoth are not installed. Run: pip install mammoth]'
+                return '\n'.join(para.text for para in doc.paragraphs)
+
+            return '[Word document: install python-docx or mammoth to extract text]'
+
         else:
             return f'[File: {filename} — content extraction not supported for this format]'
+
     except Exception as e:
         return f'[Error reading file: {str(e)}]'
 
@@ -530,21 +777,75 @@ def _get_para_align(element):
     return None
 
 
-def _add_inline_to_para(para, node, bold=False, italic=False,
-                         underline=False, strike=False):
-    """Recursively add inline HTML into a docx paragraph, tracking nested formatting.
+def _parse_css_props(style_str):
+    """Parse a CSS inline style string → dict of {prop: value}."""
+    props = {}
+    for decl in (style_str or '').split(';'):
+        decl = decl.strip()
+        if ':' in decl:
+            k, _, v = decl.partition(':')
+            props[k.strip().lower()] = v.strip()
+    return props
 
-    Formatting flags (bold, italic, etc.) accumulate as we descend so that
-    nested markup such as <strong><em>text</em></strong> is handled correctly.
+
+def _css_color_to_rgb(value):
+    """Convert a CSS colour value to an (r, g, b) int tuple, or None."""
+    from docx.shared import RGBColor
+    v = (value or '').strip().lower()
+    if v.startswith('#'):
+        h = v[1:]
+        if len(h) == 3:
+            h = h[0] * 2 + h[1] * 2 + h[2] * 2
+        if len(h) == 6:
+            try:
+                return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+            except ValueError:
+                pass
+    elif v.startswith('rgb('):
+        try:
+            parts = v[4:v.index(')')].split(',')
+            return tuple(int(p.strip()) for p in parts[:3])
+        except Exception:
+            pass
+    _NAMED = {
+        'black': (0, 0, 0), 'white': (255, 255, 255), 'red': (220, 38, 38),
+        'blue': (37, 99, 235), 'green': (22, 163, 74), 'gray': (107, 114, 128),
+        'grey': (107, 114, 128), 'navy': (26, 39, 66), 'orange': (234, 88, 12),
+        'purple': (124, 58, 237), 'yellow': (202, 138, 4),
+    }
+    return _NAMED.get(v)
+
+
+def _add_inline_to_para(para, node, bold=False, italic=False,
+                         underline=False, strike=False,
+                         color=None, font_size_pt=None):
+    """Recursively add inline HTML into a docx paragraph, applying all formatting.
+
+    Formatting flags (bold, italic, etc.) and CSS-derived properties (colour,
+    font-size) accumulate as we descend so that nested markup like
+    <strong><em><span style="color:#f00">text</span></em></strong> is handled
+    correctly at every level.
     """
     if isinstance(node, NavigableString):
         text = str(node)
         if text:
             run = para.add_run(text)
-            if bold:      run.bold           = True
-            if italic:    run.italic         = True
-            if underline: run.underline      = True
-            if strike:    run.font.strike    = True
+            if bold:         run.bold        = True
+            if italic:       run.italic      = True
+            if underline:    run.underline   = True
+            if strike:       run.font.strike = True
+            if color:
+                try:
+                    from docx.shared import RGBColor
+                    run.font.color.rgb = RGBColor(*color)
+                except Exception:
+                    pass
+            if font_size_pt:
+                try:
+                    from docx.shared import Pt
+                    run.font.size = Pt(font_size_pt)
+                except Exception:
+                    pass
         return
 
     if not isinstance(node, Tag):
@@ -556,14 +857,35 @@ def _add_inline_to_para(para, node, bold=False, italic=False,
         para.add_run('\n')
         return
 
-    # Accumulate inline formatting flags
+    # Accumulate semantic formatting flags
     _bold      = bold      or tag in ('strong', 'b')
     _italic    = italic    or tag in ('em', 'i')
     _underline = underline or tag == 'u'
     _strike    = strike    or tag in ('s', 'strike', 'del')
+    _color     = color
+    _font_size = font_size_pt
+
+    # Parse inline CSS from any element (most commonly <span style="...">)
+    style_str = node.get('style', '')
+    if style_str:
+        props = _parse_css_props(style_str)
+        if 'color' in props:
+            c = _css_color_to_rgb(props['color'])
+            if c:
+                _color = c
+        if 'font-size' in props:
+            fs = props['font-size']
+            try:
+                if fs.endswith('pt'):
+                    _font_size = float(fs[:-2])
+                elif fs.endswith('px'):
+                    _font_size = round(float(fs[:-2]) * 0.75, 1)
+            except ValueError:
+                pass
 
     for child in node.children:
-        _add_inline_to_para(para, child, _bold, _italic, _underline, _strike)
+        _add_inline_to_para(para, child, _bold, _italic, _underline, _strike,
+                            _color, _font_size)
 
 
 def _html_to_docx_body(doc, html_content):
