@@ -233,24 +233,41 @@ function restoreRange() {
 let _originalHTML = '';  // snapshot before editing so Cancel can fully revert
 
 function startEditFields() {
-  _originalHTML = preview.innerHTML;   // save baseline for Cancel
+  // Capture the current HTML — chips may already be visible in read mode.
+  // We strip them to plain {{FIELD}} text before saving the snapshot so that
+  // cancelEdit() restores a clean baseline (not duplicate chip spans).
+  const snapClone = preview.cloneNode(true);
+  snapClone.querySelectorAll('.field-chip').forEach(c =>
+    c.replaceWith(document.createTextNode(c.textContent))
+  );
+  _originalHTML = snapClone.innerHTML;
+
   preview.contentEditable = 'true';
   preview.classList.add('editing');
   document.getElementById('field-editor-bar').style.display = 'block';
   document.getElementById('edit-fields-btn').style.display  = 'none';
-  // Convert any bare {{FIELD_NAME}} text already in the document into visual
-  // chip spans so the user can see and manage them in the editor.
+  // Convert any bare {{FIELD_NAME}} text (and any already-visual chips from
+  // read mode) into editable chip spans.
   _convertTextToChips(preview);
   updateFieldBadge();
   preview.focus();
 }
 
-function cancelEdit() {
-  preview.innerHTML = _originalHTML;   // fully revert to pre-edit snapshot
+function _exitEditMode() {
+  // Shared exit logic (called after both save and cancel).
   preview.contentEditable = 'false';
   preview.classList.remove('editing');
   document.getElementById('field-editor-bar').style.display = 'none';
   document.getElementById('edit-fields-btn').style.display  = '';
+  // Re-apply chip wrapping so fields remain visually highlighted in read mode.
+  _convertTextToChips(preview);
+  updateFieldBadge();
+}
+
+function cancelEdit() {
+  // Restore content from pre-edit snapshot then exit.
+  preview.innerHTML = _originalHTML;
+  _exitEditMode();
 }
 
 // Walk text nodes and wrap {{FIELD_NAME}} occurrences in .field-chip spans.
@@ -417,9 +434,9 @@ async function saveFields() {
     const data = await res.json();
 
     if (data.ok) {
-      // Update the baseline so Cancel would restore the newly saved content
-      // (chips already stripped from clone, stored back as plain text).
-      _originalHTML = clone.innerHTML;
+      // Show the newly saved content (chips stripped → plain {{FIELD}} text),
+      // then re-apply chip wrapping so fields remain highlighted.
+      preview.innerHTML = clone.innerHTML;
 
       // Refresh the sidebar badge from the server response
       const sidebar = document.getElementById('fields-list-sidebar');
@@ -429,15 +446,16 @@ async function saveFields() {
           data.fields.map(f => `<span class="field-tag">&#123;&#123;${f}&#125;&#125;</span>`).join('') +
           '</div><p class="text-xs text-muted mt-4">These fields will be filled in when creating a contract.</p>';
       } else {
-        sidebar.innerHTML = '<div class="text-sm text-muted">No fillable fields. Add <code>{{PLACEHOLDER}}</code> markers in the editor.</div>';
+        sidebar.innerHTML = '<div class="text-sm text-muted">No fillable fields detected. Make sure placeholders are ' +
+          'typed as <code>{{FIELD_NAME}}</code> (uppercase, no spaces) and click ✏️ Edit Fields to add them.</div>';
       }
-      cancelEdit();
+      _exitEditMode();   // stays on saved content; chips highlighted in read mode
       // Flash success inline
       const bar = document.createElement('div');
       bar.style = 'position:fixed;top:16px;right:16px;background:#16a34a;color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.15)';
-      bar.textContent = '✓ Fields saved successfully';
+      bar.textContent = `✓ Fields saved — ${data.fields.length} field${data.fields.length !== 1 ? 's' : ''} detected`;
       document.body.appendChild(bar);
-      setTimeout(() => bar.remove(), 3000);
+      setTimeout(() => bar.remove(), 4000);
     } else {
       alert('Error saving: ' + (data.error || 'Unknown error'));
     }
@@ -448,5 +466,13 @@ async function saveFields() {
   btn.textContent = '💾 Save Fields';
   btn.disabled    = false;
 }
+
+// ── On page load: show chips in the read-only preview so users can see ───────
+// which parts of the document are marked as fillable fields, without needing
+// to click "Edit Fields" first.
+document.addEventListener('DOMContentLoaded', function () {
+  _convertTextToChips(preview);
+  updateFieldBadge();
+});
 </script>
 {% endblock %}
