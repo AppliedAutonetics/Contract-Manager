@@ -62,6 +62,12 @@ p[style-name='Heading 3'] => h3:fresh
 p[style-name='Heading 4'] => h4:fresh
 p[style-name='Heading 5'] => h5:fresh
 p[style-name='Heading 6'] => h6:fresh
+p[style-name='heading 1'] => h1:fresh
+p[style-name='heading 2'] => h2:fresh
+p[style-name='heading 3'] => h3:fresh
+p[style-name='heading 4'] => h4:fresh
+p[style-name='heading 5'] => h5:fresh
+p[style-name='heading 6'] => h6:fresh
 p[style-name='Title'] => h1.doc-title:fresh
 p[style-name='Subtitle'] => p.doc-subtitle:fresh
 p[style-name='Quote'] => blockquote:fresh
@@ -69,10 +75,30 @@ p[style-name='Intense Quote'] => blockquote:fresh
 p[style-name='Body Text'] => p:fresh
 p[style-name='Body Text 2'] => p:fresh
 p[style-name='Body Text 3'] => p:fresh
+p[style-name='Body Text Indent'] => p.list-paragraph:fresh
+p[style-name='Body Text Indent 2'] => p.list-paragraph:fresh
 p[style-name='List Paragraph'] => p.list-paragraph:fresh
+p[style-name='List Bullet'] => p:fresh
+p[style-name='List Bullet 2'] => p:fresh
+p[style-name='List Bullet 3'] => p:fresh
+p[style-name='List Number'] => p:fresh
+p[style-name='List Number 2'] => p:fresh
+p[style-name='List Number 3'] => p:fresh
 p[style-name='Caption'] => p.caption:fresh
+p[style-name='TOC 1'] => p:fresh
+p[style-name='TOC 2'] => p.list-paragraph:fresh
+p[style-name='TOC 3'] => p.list-paragraph:fresh
+p[style-name='No Spacing'] => p:fresh
+p[style-name='Normal (Web)'] => p:fresh
+p[style-name='Text Body'] => p:fresh
+p[style-name='First Paragraph'] => p:fresh
+p[style-name='Normal Indent'] => p.list-paragraph:fresh
 r[style-name='Strong'] => strong
 r[style-name='Emphasis'] => em
+r[style-name='Intense Emphasis'] => em
+r[style-name='Book Title'] => strong
+r[style-name='Subtle Reference'] => em
+r[style-name='Intense Reference'] => strong
 b => strong
 i => em
 u => u
@@ -404,64 +430,25 @@ def generate_pdf(contract, revision=None):
 
 
 def _generate_pdf_html(contract, html_body, revision=None):
-    """Generate a PDF from HTML content (mammoth-converted .docx) using xhtml2pdf."""
-    status_map = {
-        'draft': 'Draft', 'in_review': 'In Review', 'approved': 'Approved',
-        'finalized': 'Finalized', 'expired': 'Expired'
-    }
-    version_line = ''
-    if revision:
-        label = f'Version {revision.version_number}' + (' — FINAL' if revision.is_finalized else '')
-        version_line = f'<p class="subtitle">{label}</p>'
-
-    start_end = ''
-    if contract.start_date:
-        end = contract.end_date.strftime('%B %d, %Y') if contract.end_date else 'N/A'
-        start_end = f'<tr><td class="lbl">Start Date</td><td>{contract.start_date.strftime("%B %d, %Y")}</td><td class="lbl">End Date</td><td>{end}</td></tr>'
-
-    value_row = ''
-    if contract.value:
-        value_row = f'<tr><td class="lbl">Contract Value</td><td>${float(contract.value):,.2f}</td><td></td><td></td></tr>'
-
-    finalized_line = ''
-    if contract.finalized_at:
-        finalized_line = f' &nbsp;|&nbsp; Finalized {contract.finalized_at.strftime("%B %d, %Y")}'
-
-    gen_time = datetime.utcnow().strftime('%B %d, %Y at %H:%M UTC')
-
+    """Generate a PDF from the contract body only — no administrative metadata."""
     html = f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
 <style>
   @page {{ margin: 1in; }}
-  body {{ font-family: Arial, sans-serif; font-size: 10pt; color: #374151; line-height: 1.55; }}
-
-  /* ── Page header ── */
-  .header {{ text-align: center; border-bottom: 2pt solid #1a2742;
-             padding-bottom: 12pt; margin-bottom: 16pt; }}
-  .title   {{ font-size: 18pt; font-weight: bold; color: #1a2742; margin: 0 0 4pt 0; }}
-  .subtitle {{ font-size: 10pt; color: #64748b; margin: 2pt 0; }}
-
-  /* ── Metadata table ── */
-  .meta {{ width: 100%; border-collapse: collapse; margin-bottom: 16pt; font-size: 9pt; }}
-  .meta td {{ padding: 5pt 8pt; border: 0.5pt solid #cbd5e1; }}
-  .meta .lbl {{ font-weight: bold; color: #1a2742; width: 18%; background: #f8fafc; }}
-
-  /* ── Contract body ── */
-  .content {{ margin-top: 16pt; }}
+  body {{ font-family: Arial, sans-serif; font-size: 10pt; color: #374151; line-height: 1.6; }}
 
   /* Headings */
-  h1, .doc-title {{ font-size: 14pt; font-weight: bold; color: #1a2742;
-                    margin: 12pt 0 5pt 0; }}
+  h1 {{ font-size: 14pt; font-weight: bold; color: #1a2742; margin: 12pt 0 5pt 0; }}
   h2 {{ font-size: 12pt; font-weight: bold; color: #1a2742; margin: 10pt 0 4pt 0; }}
   h3 {{ font-size: 11pt; font-weight: bold; color: #374151; margin: 8pt 0 3pt 0; }}
   h4, h5, h6 {{ font-size: 10pt; font-weight: bold; margin: 6pt 0 2pt 0; }}
 
-  /* Paragraphs */
+  /* Paragraphs & special styles */
   p {{ margin: 3pt 0 5pt 0; }}
-  .doc-subtitle {{ font-size: 11pt; color: #6b7280; text-align: center;
-                   margin: 2pt 0 8pt 0; }}
+  .doc-title {{ font-size: 16pt; font-weight: bold; text-align: center; color: #1a2742; margin: 0 0 4pt 0; }}
+  .doc-subtitle {{ font-size: 11pt; text-align: center; color: #6b7280; margin: 2pt 0 10pt 0; }}
   .list-paragraph {{ margin-left: 18pt; }}
   .caption {{ font-size: 9pt; color: #6b7280; font-style: italic; text-align: center; }}
 
@@ -473,51 +460,25 @@ def _generate_pdf_html(contract, html_body, revision=None):
   sub {{ vertical-align: sub; font-size: 8pt; }}
   sup {{ vertical-align: super; font-size: 8pt; }}
   a {{ color: #1d4ed8; text-decoration: underline; }}
-  code, pre {{ font-family: Courier, monospace; font-size: 9pt;
-               background: #f8fafc; border: 0.5pt solid #e2e8f0;
-               padding: 0 3pt; }}
+  code, pre {{ font-family: Courier, monospace; font-size: 9pt; }}
 
   /* Blockquote */
   blockquote {{ margin: 6pt 0 6pt 20pt; padding-left: 8pt;
                 border-left: 2pt solid #d1d5db; color: #6b7280; }}
 
   /* Tables */
-  table {{ border-collapse: collapse; width: 100%; margin: 8pt 0; font-size: 9pt; }}
+  table {{ border-collapse: collapse; width: 100%; margin: 8pt 0; font-size: 9.5pt; }}
   td, th {{ border: 0.5pt solid #374151; padding: 4pt 7pt;
             vertical-align: top; word-break: break-word; }}
   th {{ font-weight: bold; background: #f1f5f9; color: #1a2742; }}
 
   /* Lists */
   ul, ol {{ margin: 3pt 0 6pt 0; padding-left: 18pt; }}
-  li {{ margin-bottom: 2pt; line-height: 1.45; }}
-
-  /* Footer */
-  .footer {{ border-top: 0.5pt solid #e2e8f0; margin-top: 32pt; padding-top: 6pt;
-             text-align: center; font-size: 8pt; color: #64748b; }}
+  li {{ margin-bottom: 2pt; line-height: 1.5; }}
 </style>
 </head>
 <body>
-<div class="header">
-  <p class="title">{contract.title}</p>
-  <p class="subtitle">Contract #{contract.contract_number}</p>
-  {version_line}
-</div>
-<table class="meta">
-  <tr>
-    <td class="lbl">Client</td><td>{contract.client.name}</td>
-    <td class="lbl">Status</td><td>{status_map.get(contract.status, contract.status)}</td>
-  </tr>
-  <tr>
-    <td class="lbl">Created</td><td>{contract.created_at.strftime('%B %d, %Y')}</td>
-    <td class="lbl">Created By</td><td>{contract.creator.full_name}</td>
-  </tr>
-  {start_end}
-  {value_row}
-</table>
-<div class="content">
 {html_body}
-</div>
-<div class="footer">Generated {gen_time}{finalized_line}</div>
 </body>
 </html>"""
 
@@ -538,7 +499,7 @@ def _generate_pdf_html(contract, html_body, revision=None):
                                    rightMargin=inch, leftMargin=inch,
                                    topMargin=inch, bottomMargin=inch)
         st = getSampleStyleSheet()
-        story = [Paragraph(contract.title, st['Title'])]
+        story = []
         for para in plain.split('\n\n'):
             para = para.strip()
             if para:
@@ -720,76 +681,20 @@ def _add_block_element(doc, element, left_indent=None):
 
 
 def generate_docx(contract, revision=None):
-    """Generate a Word (.docx) file from a contract, preserving formatting."""
+    """Generate a Word (.docx) containing only the contract body — no administrative metadata."""
     if not DOCX_AVAILABLE:
         return None
 
     doc = DocxDocument()
 
-    # Page margins
+    # Standard 1-inch page margins
     for section in doc.sections:
         section.left_margin   = Inches(1)
         section.right_margin  = Inches(1)
         section.top_margin    = Inches(1)
         section.bottom_margin = Inches(1)
 
-    # ── Header ──────────────────────────────────────────────────────────────
-    title_para = doc.add_heading(contract.title, level=0)
-    title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-    num_para = doc.add_paragraph(f'Contract #{contract.contract_number}')
-    num_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    for run in num_para.runs:
-        run.font.color.rgb = RGBColor(0x64, 0x74, 0x8b)
-        run.font.size = Pt(10)
-
-    if revision:
-        ver_label = f'Version {revision.version_number}' + (' — FINAL' if revision.is_finalized else '')
-        ver_para = doc.add_paragraph(ver_label)
-        ver_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-    # Horizontal rule via paragraph border
-    hr_para = doc.add_paragraph()
-    pPr = hr_para._p.get_or_add_pPr()
-    pBdr = OxmlElement('w:pBdr')
-    bottom = OxmlElement('w:bottom')
-    bottom.set(qn('w:val'), 'single')
-    bottom.set(qn('w:sz'), '6')
-    bottom.set(qn('w:space'), '1')
-    bottom.set(qn('w:color'), '1a2742')
-    pBdr.append(bottom)
-    pPr.append(pBdr)
-
-    # ── Metadata table ───────────────────────────────────────────────────────
-    status_map = {
-        'draft': 'Draft', 'in_review': 'In Review', 'approved': 'Approved',
-        'finalized': 'Finalized', 'expired': 'Expired'
-    }
-    meta_rows = [
-        ('Client', contract.client.name, 'Status', status_map.get(contract.status, contract.status)),
-        ('Created', contract.created_at.strftime('%B %d, %Y'), 'Created By', contract.creator.full_name),
-    ]
-    if contract.start_date:
-        end = contract.end_date.strftime('%B %d, %Y') if contract.end_date else 'N/A'
-        meta_rows.append(('Start Date', contract.start_date.strftime('%B %d, %Y'), 'End Date', end))
-    if contract.value:
-        meta_rows.append(('Contract Value', f'${float(contract.value):,.2f}', '', ''))
-
-    meta_tbl = doc.add_table(rows=len(meta_rows), cols=4)
-    meta_tbl.style = 'Table Grid'
-    for ri, (l1, v1, l2, v2) in enumerate(meta_rows):
-        row = meta_tbl.rows[ri]
-        for ci, text in enumerate((l1, v1, l2, v2)):
-            cell = row.cells[ci]
-            cell.text = text
-            if ci in (0, 2) and text:
-                for run in cell.paragraphs[0].runs:
-                    run.bold = True
-                    run.font.color.rgb = RGBColor(0x1a, 0x27, 0x42)
-
-    doc.add_paragraph()  # spacer
-
-    # ── Contract content ─────────────────────────────────────────────────────
+    # ── Contract content only ────────────────────────────────────────────────
     content = ''
     if revision:
         content = revision.content
@@ -804,17 +709,6 @@ def generate_docx(contract, revision=None):
                 para_text = para_text.strip()
                 if para_text:
                     doc.add_paragraph(para_text)
-
-    # ── Footer ───────────────────────────────────────────────────────────────
-    doc.add_paragraph()
-    footer_text = f'Generated on {datetime.utcnow().strftime("%B %d, %Y at %H:%M UTC")}'
-    if contract.finalized_at:
-        footer_text += f'  |  Finalized {contract.finalized_at.strftime("%B %d, %Y")}'
-    footer_para = doc.add_paragraph(footer_text)
-    footer_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    for run in footer_para.runs:
-        run.font.color.rgb = RGBColor(0x64, 0x74, 0x8b)
-        run.font.size = Pt(9)
 
     buf = BytesIO()
     doc.save(buf)
@@ -1153,7 +1047,13 @@ def template_fields_api(template_id):
     template = ContractTemplate.query.get_or_404(template_id)
     if template.created_by != current_user.id:
         abort(403)
-    return jsonify({'fields': template.fields, 'content': template.content})
+    # Always extract live from content so stale fields_json never causes "no fields"
+    fields = extract_template_fields(template.content or '')
+    # Keep fields_json in sync if they differ
+    if fields != template.fields:
+        template.fields = fields
+        db.session.commit()
+    return jsonify({'fields': fields, 'content': template.content})
 
 
 # ─── Contract Routes ──────────────────────────────────────────────────────────
@@ -1250,8 +1150,12 @@ def contracts_new():
             if template:
                 initial_content = template.content
 
-                # Save field values
-                for field_name in template.fields:
+                # Always extract fields live from the template content so that
+                # stale fields_json never causes submitted values to be lost.
+                live_fields = extract_template_fields(template.content or '')
+
+                # Save field values for auditing / future reference
+                for field_name in live_fields:
                     field_val = request.form.get(f'field_{field_name}', '').strip()
                     if field_val:
                         fv = ContractFieldValue(
@@ -1261,8 +1165,16 @@ def contracts_new():
                         )
                         db.session.add(fv)
 
-                # Apply fields to content
-                field_values = {f: request.form.get(f'field_{f}', '') for f in template.fields}
+                # Apply all submitted field_* values to the content, even ones
+                # not in live_fields (belt-and-suspenders for edge cases).
+                submitted_fields = {
+                    k[len('field_'):]: v
+                    for k, v in request.form.items()
+                    if k.startswith('field_') and v.strip()
+                }
+                # Merge: live_fields takes priority for ordering, submitted fills values
+                field_values = {f: request.form.get(f'field_{f}', '') for f in live_fields}
+                field_values.update({k: v for k, v in submitted_fields.items() if k not in field_values})
                 initial_content = apply_field_values(initial_content, field_values)
 
         if initial_content:
