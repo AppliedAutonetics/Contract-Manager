@@ -69,6 +69,10 @@
             <div class="flex gap-2">
               <a href="{{ url_for('templates_detail', template_id=t.id) }}" class="btn btn-ghost btn-sm">View</a>
               <a href="{{ url_for('templates_edit', template_id=t.id) }}" class="btn btn-ghost btn-sm">Edit</a>
+              <form method="POST" action="{{ url_for('templates_delete', template_id=t.id) }}" style="display:inline" onsubmit="return confirm('Delete template "{{ t.name|e }}"? This cannot be undone.')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-ghost btn-sm" style="color:#ef4444" title="Delete template">🗑</button>
+              </form>
             </div>
           </td>
         </tr>

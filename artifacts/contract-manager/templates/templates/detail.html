@@ -8,6 +8,9 @@
   <a href="{{ url_for('contracts_new') }}?template_id={{ template.id }}" class="btn btn-primary">
     Use This Template
   </a>
+  <button type="button" class="btn btn-secondary" style="color:#ef4444;border-color:#ef4444" onclick="document.getElementById('delete-template-modal').style.display='flex'">
+    🗑 Delete
+  </button>
 {% endblock %}
 
 {% block content %}
@@ -157,6 +160,23 @@
     </a>
   </div>
 
+</div>
+
+<!-- Delete confirmation modal -->
+<div id="delete-template-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;padding:32px;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.25)">
+    <h3 style="margin:0 0 8px;color:#1a2742">Delete Template?</h3>
+    <p style="margin:0 0 24px;color:#64748b;font-size:14px">
+      <strong>{{ template.name }}</strong> will be removed. Any contracts already created from this template will not be affected.
+    </p>
+    <div style="display:flex;gap:12px;justify-content:flex-end">
+      <button type="button" class="btn btn-secondary" onclick="document.getElementById('delete-template-modal').style.display='none'">Cancel</button>
+      <form method="POST" action="{{ url_for('templates_delete', template_id=template.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn" style="background:#ef4444;color:#fff;border-color:#ef4444">Yes, Delete Template</button>
+      </form>
+    </div>
+  </div>
 </div>
 
 <!-- Hidden CSRF token for AJAX -->
