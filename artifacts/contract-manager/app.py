@@ -6,7 +6,7 @@ from datetime import datetime, date
 from io import BytesIO
 
 from flask import (Flask, render_template, redirect, url_for, flash, request,
-                   jsonify, send_file, abort, session)
+                   jsonify, send_file, abort, session, make_response)
 from markupsafe import Markup, escape
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_wtf.csrf import CSRFProtect, CSRFError
@@ -174,17 +174,32 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
+_PLUS_PLACEHOLDER_RE = re.compile(r'\+([A-Za-z_][A-Za-z0-9_]*)\+')
+
+
+def _normalize_plus_placeholders(text):
+    """Convert +FIELD_NAME+ / +field_name+ → {{FIELD_NAME}} (uppercased).
+
+    Many Word templates use +NAME+ notation instead of {{NAME}}.  This
+    normalises them to our canonical format so field extraction and
+    substitution work correctly for both styles.
+    """
+    return _PLUS_PLACEHOLDER_RE.sub(lambda m: '{{' + m.group(1).upper() + '}}', text)
+
+
 def fix_split_placeholders(html):
-    """Strip HTML tags that Word/mammoth may have inserted inside {{...}} placeholders.
+    """Strip HTML tags that Word/mammoth inserted inside {{...}} placeholders
+    and normalise variant placeholder formats.
 
     Word sometimes stores a placeholder like {{CLIENT_NAME}} as multiple runs
-    with mixed formatting, so mammoth wraps each run separately and produces
+    with mixed formatting, so mammoth wraps each run separately producing
     things like {{<strong>CLIENT</strong>_NAME}}.  This step strips inline tags
     found between {{ and }} so the markers are clean.
 
-    It also normalises HTML-entity-encoded braces (&#123;&#123; → {{) and stops
-    at block-level tag boundaries so it never accidentally merges content across
-    separate table cells or paragraphs.
+    It also:
+    - Normalises HTML-entity-encoded braces  (&#123;&#123; → {{)
+    - Normalises +FIELD_NAME+ notation       (→ {{FIELD_NAME}})
+    - Stops at block-level tag boundaries so it never merges across cells
     """
     if not html:
         return html
@@ -193,6 +208,9 @@ def fix_split_placeholders(html):
     html = html.replace('&#123;&#123;', '{{').replace('&#125;&#125;', '}}')
     html = html.replace('&lbrace;&lbrace;', '{{').replace('&rbrace;&rbrace;', '}}')
     html = html.replace('&#x7B;&#x7B;', '{{').replace('&#x7D;&#x7D;', '}}')
+
+    # Normalise +FIELD_NAME+ → {{FIELD_NAME}} before any other processing
+    html = _normalize_plus_placeholders(html)
 
     if '{{' not in html:
         return html
@@ -219,7 +237,15 @@ def fix_split_placeholders(html):
 
 
 def extract_template_fields(content):
-    """Find all {{FIELD_NAME}} markers in template content (HTML or plain text)."""
+    """Find all {{FIELD_NAME}} markers in template content (HTML or plain text).
+
+    Also detects +FIELD_NAME+ notation by normalising first, so both formats
+    are transparently supported.
+    """
+    # Normalise +FIELD+ notation in plain-text content before searching
+    if not is_html_content(content):
+        content = _normalize_plus_placeholders(content)
+
     pattern = r'\{\{([A-Z_][A-Z0-9_]*)\}\}'
     if is_html_content(content):
         # Clean split placeholders first, then also search the plain-text
@@ -235,15 +261,22 @@ def extract_template_fields(content):
 
 
 def apply_field_values(content, field_values):
-    """Replace {{FIELD_NAME}} markers with actual values.
+    """Replace {{FIELD_NAME}} markers (and +FIELD_NAME+ variants) with actual values.
 
     For HTML content the split-placeholder cleaner runs first so that markers
     like {{<strong>CLIENT_NAME</strong>}} are normalised before substitution.
+    Unfilled fields (no value provided) are left as the original {{FIELD_NAME}}
+    placeholder so the document clearly shows what is still missing.
     """
-    if is_html_content(content):
-        content = fix_split_placeholders(content)
+    # Normalise +FIELD+ notation in plain-text content
+    if not is_html_content(content):
+        content = _normalize_plus_placeholders(content)
+    else:
+        content = fix_split_placeholders(content)   # also normalises +FIELD+
+
     for name, value in field_values.items():
-        content = content.replace('{{' + name + '}}', value if value else f'[{name}]')
+        placeholder = '{{' + name + '}}'
+        content = content.replace(placeholder, value if value else placeholder)
     return content
 
 
@@ -437,18 +470,41 @@ def _docx_to_html(file_path):
         return f'<{tag}{style_attr}>{inner}</{tag}>'
 
     def _table_html(table):
+        # Detect header row: row 0 is a header if all its first-paragraph runs are bold
+        def _row_is_header(row):
+            try:
+                for cell in row.cells:
+                    if not cell.paragraphs:
+                        return False
+                    runs = [r for r in cell.paragraphs[0].runs if r.text.strip()]
+                    if runs and not all(r.bold for r in runs):
+                        return False
+                return bool(row.cells)
+            except Exception:
+                return False
+
         rows = []
+        header_detected = _row_is_header(table.rows[0]) if table.rows else False
         for ri, row in enumerate(table.rows):
             cells_html = []
             seen_ids = set()
+            is_header_row = (ri == 0 and header_detected)
+            ctag = 'th' if is_header_row else 'td'
             for cell in row.cells:
                 cid = id(cell._tc)
                 if cid in seen_ids:
                     continue        # skip merged duplicates
                 seen_ids.add(cid)
-                ctag = 'th' if ri == 0 else 'td'
-                inner = '\n'.join(_para_html(p) for p in cell.paragraphs)
-                cells_html.append(f'<{ctag}>{inner}</{ctag}>')
+                # Collect non-empty paragraph HTML; skip trailing blank paras
+                cell_parts = []
+                for p in cell.paragraphs:
+                    inner = ''.join(_run_html(r) for r in p.runs)
+                    if inner.strip():
+                        tag, sattr, _ = _para_styles(p)
+                        cell_parts.append(f'<{tag}{sattr}>{inner}</{tag}>')
+                if not cell_parts:
+                    cell_parts = ['<p>&nbsp;</p>']
+                cells_html.append(f'<{ctag}>{"".join(cell_parts)}</{ctag}>')
             rows.append(f'<tr>{"".join(cells_html)}</tr>')
         return f'<table>{"".join(rows)}</table>'
 
@@ -991,13 +1047,39 @@ def _add_block_element(doc, element, left_indent=None):
                     break
                 cell = tbl.cell(ri, ci)
                 cell.text = ''
-                para = cell.paragraphs[0]
                 is_header = cell_el.name == 'th'
-                for child in cell_el.children:
-                    _add_inline_to_para(para, child, bold=is_header)
-                c_align = _get_para_align(cell_el)
-                if c_align is not None:
-                    para.alignment = c_align
+
+                # Get direct <p>/<hN> block children (each becomes its own paragraph)
+                block_children = [c for c in cell_el.children
+                                  if isinstance(c, Tag) and c.name in
+                                  ('p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6')]
+
+                if block_children:
+                    para = cell.paragraphs[0]
+                    for pi, blk in enumerate(block_children):
+                        if pi > 0:
+                            para = cell.add_paragraph()
+                        for child in blk.children:
+                            _add_inline_to_para(para, child, bold=is_header)
+                        c_align = _get_para_align(blk)
+                        if c_align is not None:
+                            para.alignment = c_align
+                        if is_header:
+                            try:
+                                from docx.shared import RGBColor as _RGB
+                                for run in para.runs:
+                                    if not run.font.color.type:
+                                        run.font.color.rgb = _RGB(0x1a, 0x27, 0x42)
+                            except Exception:
+                                pass
+                else:
+                    # No block wrappers — treat all children as inline content
+                    para = cell.paragraphs[0]
+                    for child in cell_el.children:
+                        _add_inline_to_para(para, child, bold=is_header)
+                    c_align = _get_para_align(cell_el)
+                    if c_align is not None:
+                        para.alignment = c_align
 
     # ── Blockquote — indented container ──────────────────────────────────────
     elif tag == 'blockquote':
@@ -1019,18 +1101,60 @@ def _add_block_element(doc, element, left_indent=None):
 
 
 def generate_docx(contract, revision=None):
-    """Generate a Word (.docx) containing only the contract body — no administrative metadata."""
+    """Generate a Word (.docx) containing only the contract body.
+
+    Document-level styles are set to match the PDF output (Arial 10 pt,
+    colour #374151 for body; matching size/colour/weight for headings) so
+    that DOCX and PDF exports look identical to the reader.
+    """
     if not DOCX_AVAILABLE:
         return None
 
     doc = DocxDocument()
 
-    # Standard 1-inch page margins
+    # ── Standard 1-inch page margins ────────────────────────────────────────
     for section in doc.sections:
         section.left_margin   = Inches(1)
         section.right_margin  = Inches(1)
         section.top_margin    = Inches(1)
         section.bottom_margin = Inches(1)
+
+    # ── Base style — matches PDF: Arial 10 pt, colour #374151 ───────────────
+    try:
+        normal = doc.styles['Normal']
+        normal.font.name      = 'Arial'
+        normal.font.size      = Pt(10)
+        normal.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
+    except Exception:
+        pass
+
+    # ── Heading styles — match PDF CSS ───────────────────────────────────────
+    _HEADING_DEFS = {
+        1: (Pt(14), RGBColor(0x1a, 0x27, 0x42)),
+        2: (Pt(12), RGBColor(0x1a, 0x27, 0x42)),
+        3: (Pt(11), RGBColor(0x37, 0x41, 0x51)),
+        4: (Pt(10), RGBColor(0x37, 0x41, 0x51)),
+        5: (Pt(10), RGBColor(0x37, 0x41, 0x51)),
+        6: (Pt(10), RGBColor(0x37, 0x41, 0x51)),
+    }
+    for level, (size, color) in _HEADING_DEFS.items():
+        try:
+            h = doc.styles[f'Heading {level}']
+            h.font.name      = 'Arial'
+            h.font.size      = size
+            h.font.color.rgb = color
+            h.font.bold      = True
+        except Exception:
+            pass
+
+    # ── List styles — consistent font ────────────────────────────────────────
+    for lst_style in ('List Bullet', 'List Number', 'List Paragraph'):
+        try:
+            s = doc.styles[lst_style]
+            s.font.name = 'Arial'
+            s.font.size = Pt(10)
+        except Exception:
+            pass
 
     # ── Contract content only ────────────────────────────────────────────────
     content = ''
@@ -1416,7 +1540,8 @@ def contracts_list():
     contracts = query.order_by(Contract.updated_at.desc()).all()
     clients = Client.query.filter_by(created_by=current_user.id).order_by(Client.name).all()
     return render_template('contracts/list.html', contracts=contracts, clients=clients,
-                           q=q, status=status, client_id=client_id)
+                           q=q, status=status, client_id=client_id,
+                           today=datetime.utcnow().date())
 
 
 @app.route('/contracts/new', methods=['GET', 'POST'])
@@ -1901,6 +2026,70 @@ def contracts_delete(contract_id):
     db.session.commit()
     flash(f'Contract "{title}" has been permanently deleted.', 'success')
     return redirect(url_for('contracts_list'))
+
+
+# ─── Contract Report Export ───────────────────────────────────────────────────
+
+@app.route('/contracts/export')
+@login_required
+def contracts_export():
+    """Download all contracts as a CSV report with values and monthly revenue."""
+    import csv
+    from io import StringIO
+
+    contracts = (
+        Contract.query
+        .filter_by(created_by=current_user.id)
+        .order_by(Contract.status, Contract.contract_number)
+        .all()
+    )
+
+    si = StringIO()
+    writer = csv.writer(si)
+    writer.writerow([
+        'Contract #', 'Title', 'Client', 'Company', 'Status',
+        'Start Date', 'End Date', 'Term (months)',
+        'Total Value ($)', 'Monthly Revenue ($)',
+        'Finalized Date', 'Executed Date',
+    ])
+
+    for c in contracts:
+        # Term length in whole months
+        months = 0
+        if c.start_date and c.end_date:
+            months = max(0,
+                (c.end_date.year  - c.start_date.year)  * 12 +
+                (c.end_date.month - c.start_date.month)
+            )
+
+        total_val   = float(c.value) if c.value else None
+        monthly_rev = (total_val / months) if (total_val and months) else None
+
+        writer.writerow([
+            c.contract_number,
+            c.title,
+            c.client.name,
+            c.client.company or '',
+            c.status.replace('_', ' ').title(),
+            c.start_date.strftime('%Y-%m-%d')  if c.start_date  else '',
+            c.end_date.strftime('%Y-%m-%d')    if c.end_date    else '',
+            months or '',
+            f'{total_val:.2f}'   if total_val   is not None else '',
+            f'{monthly_rev:.2f}' if monthly_rev is not None else '',
+            c.finalized_at.strftime('%Y-%m-%d') if c.finalized_at else '',
+            c.executed_at.strftime('%Y-%m-%d')  if c.executed_at  else '',
+        ])
+
+    log_action('export_report', 'contract', details='Exported contracts CSV report')
+
+    output = si.getvalue()
+    response = make_response(output)
+    response.headers['Content-Type'] = 'text/csv; charset=utf-8'
+    ts = datetime.utcnow().strftime('%Y%m%d')
+    response.headers['Content-Disposition'] = (
+        f'attachment; filename=contracts_report_{ts}.csv'
+    )
+    return response
 
 
 # ─── Template Parsing API ─────────────────────────────────────────────────────

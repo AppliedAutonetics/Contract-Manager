@@ -4,6 +4,10 @@
 {% block page_subtitle %}<div class="topbar-subtitle">{{ contracts|length }} result{% if contracts|length != 1 %}s{% endif %}</div>{% endblock %}
 
 {% block topbar_actions %}
+  <a href="{{ url_for('contracts_export') }}" class="btn btn-secondary" title="Download CSV report of all contracts">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    Export Report
+  </a>
   <a href="{{ url_for('contracts_new') }}" class="btn btn-primary">
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     New Contract
@@ -62,8 +66,9 @@
           <th>Contract</th>
           <th>Client</th>
           <th>Status</th>
-          <th>Revisions</th>
           <th>Value</th>
+          <th>Start</th>
+          <th>Expires</th>
           <th>Updated</th>
           <th></th>
         </tr>
@@ -86,14 +91,22 @@
               <span class="badge-dot"></span>{{ c.status.replace('_',' ').title() }}
             </span>
           </td>
-          <td>
-            <span class="badge badge-version">v{{ c.revision_count }}</span>
-            {% if c.latest_revision and c.latest_revision.is_finalized %}
-            <span class="badge badge-final" style="margin-left:4px">✓ Final</span>
-            {% endif %}
+          <td class="text-sm">
+            {% if c.value %}<strong>${{ '{:,.0f}'.format(c.value|float) }}</strong>{% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td class="text-sm text-muted">
+            {% if c.start_date %}{{ c.start_date.strftime('%b %d, %Y') }}{% else %}—{% endif %}
           </td>
           <td class="text-sm">
-            {% if c.value %}${{ '{:,.0f}'.format(c.value|float) }}{% else %}—{% endif %}
+            {% if c.end_date %}
+              {% set active = c.status not in ('expired','fully_executed') %}
+              {% set is_past = c.end_date < today %}
+              {% set days_left = (c.end_date - today).days %}
+              <span style="{% if active and is_past %}color:var(--danger);font-weight:600{% elif active and days_left <= 30 %}color:#d97706;font-weight:600{% endif %}">
+                {{ c.end_date.strftime('%b %d, %Y') }}
+                {% if active and is_past %} ⚠{% elif active and days_left <= 30 %} ({{ days_left }}d){% endif %}
+              </span>
+            {% else %}<span class="text-muted">—</span>{% endif %}
           </td>
           <td class="text-sm text-muted">{{ c.updated_at.strftime('%b %d, %Y') }}</td>
           <td>
