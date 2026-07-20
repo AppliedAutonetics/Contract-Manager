@@ -13,12 +13,22 @@
 {% block content %}
 <!-- Status pills -->
 <div class="flex gap-2 mb-4 flex-wrap">
-  <a href="{{ url_for('contracts_list') }}" class="btn btn-sm {% if not status %}btn-navy{% else %}btn-secondary{% endif %}">All</a>
-  <a href="{{ url_for('contracts_list', status='draft') }}" class="btn btn-sm {% if status == 'draft' %}btn-navy{% else %}btn-secondary{% endif %}">Draft</a>
-  <a href="{{ url_for('contracts_list', status='in_review') }}" class="btn btn-sm {% if status == 'in_review' %}btn-navy{% else %}btn-secondary{% endif %}">In Review</a>
-  <a href="{{ url_for('contracts_list', status='approved') }}" class="btn btn-sm {% if status == 'approved' %}btn-navy{% else %}btn-secondary{% endif %}">Approved</a>
-  <a href="{{ url_for('contracts_list', status='finalized') }}" class="btn btn-sm {% if status == 'finalized' %}btn-navy{% else %}btn-secondary{% endif %}">Finalized</a>
-  <a href="{{ url_for('contracts_list', status='expired') }}" class="btn btn-sm {% if status == 'expired' %}btn-navy{% else %}btn-secondary{% endif %}">Expired</a>
+  <a href="{{ url_for('contracts_list') }}"
+     class="btn btn-sm {% if not status %}btn-navy{% else %}btn-secondary{% endif %}">All</a>
+  <a href="{{ url_for('contracts_list', status='draft') }}"
+     class="btn btn-sm {% if status == 'draft' %}btn-navy{% else %}btn-secondary{% endif %}">Draft</a>
+  <a href="{{ url_for('contracts_list', status='in_review') }}"
+     class="btn btn-sm {% if status == 'in_review' %}btn-navy{% else %}btn-secondary{% endif %}">In Review</a>
+  <a href="{{ url_for('contracts_list', status='approved') }}"
+     class="btn btn-sm {% if status == 'approved' %}btn-navy{% else %}btn-secondary{% endif %}">Approved</a>
+  <a href="{{ url_for('contracts_list', status='finalized') }}"
+     class="btn btn-sm {% if status == 'finalized' %}btn-navy{% else %}btn-secondary{% endif %}">Sent for Signature</a>
+  <a href="{{ url_for('contracts_list', status='partially_executed') }}"
+     class="btn btn-sm {% if status == 'partially_executed' %}btn-navy{% else %}btn-secondary{% endif %}">Partially Executed</a>
+  <a href="{{ url_for('contracts_list', status='fully_executed') }}"
+     class="btn btn-sm {% if status == 'fully_executed' %}btn-navy{% else %}btn-secondary{% endif %}">✅ Fully Executed</a>
+  <a href="{{ url_for('contracts_list', status='expired') }}"
+     class="btn btn-sm {% if status == 'expired' %}btn-navy{% else %}btn-secondary{% endif %}">Expired</a>
 </div>
 
 <div class="card">

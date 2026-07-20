@@ -85,7 +85,9 @@ class Contract(db.Model):
     contract_number = db.Column(db.String(100), unique=True)
     client_id = db.Column(db.Integer, db.ForeignKey('clients.id'), nullable=False)
     template_id = db.Column(db.Integer, db.ForeignKey('contract_templates.id'))
-    status = db.Column(db.String(50), default='draft')  # draft, in_review, approved, finalized, expired
+    # Lifecycle: draft → in_review → approved → finalized → partially_executed → fully_executed
+    # expired is a terminal state reachable from any active status
+    status = db.Column(db.String(50), default='draft')
     notes = db.Column(db.Text)
     start_date = db.Column(db.Date)
     end_date = db.Column(db.Date)
@@ -93,7 +95,8 @@ class Contract(db.Model):
     created_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    finalized_at = db.Column(db.DateTime)
+    finalized_at = db.Column(db.DateTime)   # when sent for signature
+    executed_at  = db.Column(db.DateTime)   # when fully executed (all parties signed)
 
     revisions = db.relationship('ContractRevision', backref='contract', lazy='dynamic', order_by='ContractRevision.version_number')
     field_values = db.relationship('ContractFieldValue', backref='contract', lazy='dynamic')
@@ -108,13 +111,19 @@ class Contract(db.Model):
         return self.revisions.count()
 
     @property
+    def is_executed(self):
+        return self.status == 'fully_executed'
+
+    @property
     def status_color(self):
         colors = {
-            'draft': 'gray',
-            'in_review': 'yellow',
-            'approved': 'blue',
-            'finalized': 'green',
-            'expired': 'red',
+            'draft':              'gray',
+            'in_review':          'yellow',
+            'approved':           'blue',
+            'finalized':          'purple',
+            'partially_executed': 'orange',
+            'fully_executed':     'green',
+            'expired':            'red',
         }
         return colors.get(self.status, 'gray')
 

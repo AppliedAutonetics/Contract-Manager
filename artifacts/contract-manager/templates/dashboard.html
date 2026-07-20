@@ -24,9 +24,14 @@
     <div class="stat-sub">Awaiting action</div>
   </div>
   <div class="stat-card success">
-    <div class="stat-label">Finalized</div>
-    <div class="stat-value">{{ by_status.finalized }}</div>
-    <div class="stat-sub">Completed contracts</div>
+    <div class="stat-label">Fully Executed</div>
+    <div class="stat-value">{{ by_status.fully_executed }}</div>
+    <div class="stat-sub">All parties signed</div>
+  </div>
+  <div class="stat-card" style="border-top-color:#7c3aed">
+    <div class="stat-label">Pending Signatures</div>
+    <div class="stat-value">{{ by_status.finalized + by_status.partially_executed }}</div>
+    <div class="stat-sub">Finalized or partially signed</div>
   </div>
   <div class="stat-card">
     <div class="stat-label">Draft</div>

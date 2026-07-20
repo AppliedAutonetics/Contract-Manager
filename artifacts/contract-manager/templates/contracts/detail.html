@@ -14,10 +14,12 @@
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
     DOCX
   </a>
+  {% if contract.status != 'fully_executed' %}
   <a href="{{ url_for('revisions_new', contract_id=contract.id) }}" class="btn btn-primary">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
     Add Revision
   </a>
+  {% endif %}
 {% endblock %}
 
 {% block content %}
@@ -25,15 +27,57 @@
   <!-- Left: Content -->
   <div>
 
-    <!-- Status Banner -->
-    {% if contract.status == 'finalized' %}
-    <div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:var(--radius);padding:12px 18px;margin-bottom:20px;display:flex;align-items:center;gap:10px">
-      <span style="font-size:20px">✅</span>
-      <div>
-        <div style="font-weight:700;color:#065f46">Contract Finalized</div>
-        <div style="font-size:13px;color:#059669">{{ contract.finalized_at.strftime('%B %d, %Y at %H:%M UTC') if contract.finalized_at }}</div>
+    <!-- ── Status Banner ─────────────────────────────────────────────────── -->
+    {% if contract.status == 'fully_executed' %}
+    <div style="background:#ccfbf1;border:1px solid #5eead4;border-radius:var(--radius);padding:14px 18px;margin-bottom:20px;display:flex;align-items:center;gap:12px">
+      <span style="font-size:22px">✅</span>
+      <div style="flex:1">
+        <div style="font-weight:700;color:#134e4a;font-size:15px">Fully Executed — Contract Complete</div>
+        <div style="font-size:13px;color:#0d9488">
+          All parties have signed.
+          {% if contract.executed_at %} Executed {{ contract.executed_at.strftime('%B %d, %Y') }}.{% endif %}
+          {% if contract.finalized_at %} Sent for signature {{ contract.finalized_at.strftime('%B %d, %Y') }}.{% endif %}
+        </div>
       </div>
     </div>
+
+    {% elif contract.status == 'partially_executed' %}
+    <div style="background:#fff7ed;border:1px solid #fdba74;border-radius:var(--radius);padding:14px 18px;margin-bottom:20px;display:flex;align-items:center;gap:12px">
+      <span style="font-size:22px">✍️</span>
+      <div style="flex:1">
+        <div style="font-weight:700;color:#9a3412">Partially Executed — Awaiting Remaining Signatures</div>
+        <div style="font-size:13px;color:#c2410c">Some parties have signed. Contract is not yet fully executed.</div>
+      </div>
+      <form method="POST" action="{{ url_for('contracts_status', contract_id=contract.id) }}" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="status" value="fully_executed">
+        <button type="submit" class="btn btn-sm"
+                style="background:#0d9488;color:#fff;border-color:#0d9488;white-space:nowrap">
+          ✅ Mark Fully Executed
+        </button>
+      </form>
+    </div>
+
+    {% elif contract.status == 'finalized' %}
+    <div style="background:#ede9fe;border:1px solid #c4b5fd;border-radius:var(--radius);padding:14px 18px;margin-bottom:20px;display:flex;align-items:center;gap:12px">
+      <span style="font-size:22px">📬</span>
+      <div style="flex:1">
+        <div style="font-weight:700;color:#5b21b6">Sent for Signature</div>
+        <div style="font-size:13px;color:#7c3aed">
+          Contract has been finalized and is awaiting signatures.
+          {% if contract.finalized_at %} Sent {{ contract.finalized_at.strftime('%B %d, %Y') }}.{% endif %}
+        </div>
+      </div>
+      <form method="POST" action="{{ url_for('contracts_status', contract_id=contract.id) }}" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="status" value="partially_executed">
+        <button type="submit" class="btn btn-sm"
+                style="background:#ea580c;color:#fff;border-color:#ea580c;white-space:nowrap">
+          ✍️ Mark Partially Executed
+        </button>
+      </form>
+    </div>
+
     {% elif contract.status == 'in_review' %}
     <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:var(--radius);padding:12px 18px;margin-bottom:20px;display:flex;align-items:center;gap:10px">
       <span style="font-size:20px">🔍</span>
@@ -82,7 +126,9 @@
           {% if contract.revision_count >= 2 %}
           <a href="{{ url_for('contracts_compare', contract_id=contract.id) }}" class="btn btn-secondary btn-sm">Compare Revisions</a>
           {% endif %}
+          {% if contract.status != 'fully_executed' %}
           <a href="{{ url_for('revisions_new', contract_id=contract.id) }}" class="btn btn-ghost btn-sm">+ Add Revision</a>
+          {% endif %}
         </div>
       </div>
       <div class="card-body">
@@ -107,11 +153,12 @@
             <div class="revision-actions">
               <a href="{{ url_for('contracts_pdf', contract_id=contract.id, revision_id=rev.id) }}" class="btn btn-ghost btn-sm" title="Download PDF">PDF</a>
               <a href="{{ url_for('contracts_docx', contract_id=contract.id, revision_id=rev.id) }}" class="btn btn-ghost btn-sm" title="Download Word Doc">DOCX</a>
-              {% if not rev.is_finalized and contract.status != 'finalized' %}
+              {% if not rev.is_finalized and contract.status not in ('finalized', 'partially_executed', 'fully_executed') %}
               <form method="POST" action="{{ url_for('contracts_finalize', contract_id=contract.id) }}" style="display:inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="revision_id" value="{{ rev.id }}">
-                <button type="submit" class="btn btn-success btn-sm" data-confirm="Finalize this revision as the official version? This will mark the contract as complete.">Finalize</button>
+                <button type="submit" class="btn btn-success btn-sm"
+                        onclick="return confirm('Finalize this revision and send for signature?')">Finalize</button>
               </form>
               {% endif %}
             </div>
@@ -156,17 +203,22 @@
       <div class="card-header"><span class="card-title">Quick Actions</span></div>
       <div class="card-body">
         <div style="display:flex;flex-direction:column;gap:8px">
+
+          <!-- Status selector -->
           <form method="POST" action="{{ url_for('contracts_status', contract_id=contract.id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <select name="status" class="form-control" style="margin-bottom:6px" onchange="this.form.submit()">
-              <option value="draft" {% if contract.status == 'draft' %}selected{% endif %}>Draft</option>
-              <option value="in_review" {% if contract.status == 'in_review' %}selected{% endif %}>In Review</option>
-              <option value="approved" {% if contract.status == 'approved' %}selected{% endif %}>Approved</option>
-              <option value="finalized" {% if contract.status == 'finalized' %}selected{% endif %}>Finalized</option>
-              <option value="expired" {% if contract.status == 'expired' %}selected{% endif %}>Expired</option>
+              <option value="draft"              {% if contract.status == 'draft' %}selected{% endif %}>Draft</option>
+              <option value="in_review"          {% if contract.status == 'in_review' %}selected{% endif %}>In Review</option>
+              <option value="approved"           {% if contract.status == 'approved' %}selected{% endif %}>Approved</option>
+              <option value="finalized"          {% if contract.status == 'finalized' %}selected{% endif %}>Finalized (Sent for Signature)</option>
+              <option value="partially_executed" {% if contract.status == 'partially_executed' %}selected{% endif %}>Partially Executed</option>
+              <option value="fully_executed"     {% if contract.status == 'fully_executed' %}selected{% endif %}>Fully Executed ✓</option>
+              <option value="expired"            {% if contract.status == 'expired' %}selected{% endif %}>Expired</option>
             </select>
             <noscript><button type="submit" class="btn btn-secondary btn-sm">Update Status</button></noscript>
           </form>
+
           {% if contract.revision_count >= 2 %}
           <a href="{{ url_for('contracts_compare', contract_id=contract.id) }}" class="btn btn-secondary" style="justify-content:center">
             🔄 Compare Revisions
@@ -178,9 +230,11 @@
           <a href="{{ url_for('contracts_docx', contract_id=contract.id) }}" class="btn btn-secondary" style="justify-content:center">
             📝 Download Word (.docx)
           </a>
+          {% if contract.status != 'fully_executed' %}
           <a href="{{ url_for('revisions_new', contract_id=contract.id) }}" class="btn btn-primary" style="justify-content:center">
             + Upload Revision
           </a>
+          {% endif %}
           <hr style="margin:4px 0;border-color:var(--gray-200)">
           <button type="button" class="btn btn-ghost" style="justify-content:center;color:var(--danger)"
                   onclick="document.getElementById('delete-modal').style.display='flex'">
@@ -194,18 +248,14 @@
     <div id="delete-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;align-items:center;justify-content:center">
       <div style="background:#fff;border-radius:var(--radius);padding:28px 32px;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.2)">
         <div style="font-size:22px;margin-bottom:8px">⚠️ Delete contract?</div>
-        <p style="margin:0 0 6px;font-size:14px;color:var(--gray-700)">
-          You are about to permanently delete:
-        </p>
+        <p style="margin:0 0 6px;font-size:14px;color:var(--gray-700)">You are about to permanently delete:</p>
         <p style="margin:0 0 18px;font-weight:700;font-size:14px">{{ contract.title }}</p>
         <p style="margin:0 0 24px;font-size:13px;color:var(--gray-500)">
           This will remove all revisions, field values, and associated files. This action cannot be undone.
         </p>
         <div style="display:flex;gap:10px;justify-content:flex-end">
           <button type="button" class="btn btn-secondary"
-                  onclick="document.getElementById('delete-modal').style.display='none'">
-            Cancel
-          </button>
+                  onclick="document.getElementById('delete-modal').style.display='none'">Cancel</button>
           <form method="POST" action="{{ url_for('contracts_delete', contract_id=contract.id) }}" style="margin:0">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn" style="background:var(--danger);color:#fff;border-color:var(--danger)">
@@ -250,6 +300,18 @@
           <div>
             <div class="meta-label">Term</div>
             <div class="text-sm">{{ contract.start_date.strftime('%b %d, %Y') }} — {{ contract.end_date.strftime('%b %d, %Y') if contract.end_date else 'Ongoing' }}</div>
+          </div>
+          {% endif %}
+          {% if contract.finalized_at %}
+          <div>
+            <div class="meta-label">Sent for Signature</div>
+            <div class="text-sm">{{ contract.finalized_at.strftime('%B %d, %Y') }}</div>
+          </div>
+          {% endif %}
+          {% if contract.executed_at %}
+          <div>
+            <div class="meta-label">Fully Executed</div>
+            <div class="text-sm font-semibold" style="color:#0d9488">{{ contract.executed_at.strftime('%B %d, %Y') }}</div>
           </div>
           {% endif %}
           <div>

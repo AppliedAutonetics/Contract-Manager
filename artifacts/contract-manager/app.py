@@ -793,10 +793,12 @@ def logout():
 def dashboard():
     total_contracts = Contract.query.filter_by(created_by=current_user.id).count()
     by_status = {
-        'draft': Contract.query.filter_by(created_by=current_user.id, status='draft').count(),
-        'in_review': Contract.query.filter_by(created_by=current_user.id, status='in_review').count(),
-        'approved': Contract.query.filter_by(created_by=current_user.id, status='approved').count(),
-        'finalized': Contract.query.filter_by(created_by=current_user.id, status='finalized').count(),
+        'draft':              Contract.query.filter_by(created_by=current_user.id, status='draft').count(),
+        'in_review':          Contract.query.filter_by(created_by=current_user.id, status='in_review').count(),
+        'approved':           Contract.query.filter_by(created_by=current_user.id, status='approved').count(),
+        'finalized':          Contract.query.filter_by(created_by=current_user.id, status='finalized').count(),
+        'partially_executed': Contract.query.filter_by(created_by=current_user.id, status='partially_executed').count(),
+        'fully_executed':     Contract.query.filter_by(created_by=current_user.id, status='fully_executed').count(),
     }
     recent_contracts = Contract.query.filter_by(created_by=current_user.id).order_by(Contract.updated_at.desc()).limit(8).all()
     total_clients = Client.query.filter_by(created_by=current_user.id).count()
@@ -1123,11 +1125,20 @@ def contracts_new():
         except ValueError:
             pass
 
+        # Allow uploading already-signed/executed contracts at a specific stage
+        _valid_statuses = [
+            'draft', 'in_review', 'approved', 'finalized',
+            'partially_executed', 'fully_executed', 'expired',
+        ]
+        initial_status = request.form.get('initial_status', 'draft')
+        if initial_status not in _valid_statuses:
+            initial_status = 'draft'
+
         contract = Contract(
             title=request.form.get('title', '').strip(),
             client_id=submitted_client.id,
             template_id=template_id,
-            status='draft',
+            status=initial_status,
             notes=request.form.get('notes', '').strip(),
             start_date=start_date,
             end_date=end_date,
@@ -1135,6 +1146,11 @@ def contracts_new():
             created_by=current_user.id,
             contract_number=generate_contract_number()
         )
+        # Set execution timestamps based on the chosen initial status
+        if initial_status in ('finalized', 'partially_executed', 'fully_executed'):
+            contract.finalized_at = datetime.utcnow()
+        if initial_status == 'fully_executed':
+            contract.executed_at = datetime.utcnow()
 
         if not contract.title or not contract.client_id:
             flash('Title and client are required.', 'error')
@@ -1143,8 +1159,26 @@ def contracts_new():
         db.session.add(contract)
         db.session.flush()
 
-        # Create initial revision from template or manual content
+        # ── Uploaded document (import mode) ──────────────────────────────────
+        uploaded_file_name = None
         initial_content = request.form.get('initial_content', '').strip()
+        if 'document_file' in request.files and request.files['document_file'].filename:
+            file = request.files['document_file']
+            if allowed_file(file.filename):
+                uploaded_file_name = secure_filename(file.filename)
+                ts = datetime.utcnow().strftime('%Y%m%d%H%M%S')
+                save_path = os.path.join(
+                    app.config['UPLOAD_FOLDER'],
+                    f'contract_{contract.id}_{ts}_{uploaded_file_name}'
+                )
+                file.save(save_path)
+                initial_content = extract_text_from_file(save_path, uploaded_file_name)
+            else:
+                flash('Invalid file type. Allowed: txt, docx, pdf', 'error')
+                db.session.rollback()
+                return render_template('contracts/new.html', clients=clients, templates=templates, contract=None)
+
+        # ── Template-based content ────────────────────────────────────────────
         if template_id and not initial_content:
             template = ContractTemplate.query.get(template_id)
             if template:
@@ -1462,17 +1496,32 @@ def contracts_status(contract_id):
     if contract.created_by != current_user.id:
         abort(403)
     new_status = request.form.get('status')
-    valid_statuses = ['draft', 'in_review', 'approved', 'finalized', 'expired']
+    valid_statuses = [
+        'draft', 'in_review', 'approved', 'finalized',
+        'partially_executed', 'fully_executed', 'expired',
+    ]
     if new_status in valid_statuses:
         old_status = contract.status
         contract.status = new_status
         contract.updated_at = datetime.utcnow()
-        if new_status == 'finalized' and not contract.finalized_at:
-            contract.finalized_at = datetime.utcnow()
+        # Set finalized_at the first time the contract enters the signature pipeline
+        if new_status in ('finalized', 'partially_executed', 'fully_executed'):
+            if not contract.finalized_at:
+                contract.finalized_at = datetime.utcnow()
+        # Record the moment of full execution
+        if new_status == 'fully_executed' and not contract.executed_at:
+            contract.executed_at = datetime.utcnow()
         log_action('status_change', 'contract', contract.id, contract_id=contract.id,
                    details=f'Status changed: {old_status} → {new_status}')
         db.session.commit()
-        flash(f'Status updated to {new_status.replace("_", " ").title()}.', 'success')
+        labels = {
+            'draft': 'Draft', 'in_review': 'In Review', 'approved': 'Approved',
+            'finalized': 'Finalized — Sent for Signature',
+            'partially_executed': 'Partially Executed',
+            'fully_executed': 'Fully Executed',
+            'expired': 'Expired',
+        }
+        flash(f'Status updated to {labels.get(new_status, new_status)}.', 'success')
     return redirect(url_for('contracts_detail', contract_id=contract_id))
 
 
@@ -1520,6 +1569,14 @@ def detect_fields_api():
 # direct). This is idempotent — SQLAlchemy skips tables that already exist.
 with app.app_context():
     db.create_all()
+    # Add new columns introduced after initial deployment (safe no-op if they already exist)
+    try:
+        db.session.execute(db.text(
+            'ALTER TABLE contracts ADD COLUMN IF NOT EXISTS executed_at TIMESTAMP'
+        ))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
 
 
 if __name__ == '__main__':

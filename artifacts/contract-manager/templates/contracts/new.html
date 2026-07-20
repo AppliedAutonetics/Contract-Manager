@@ -11,14 +11,32 @@
   <div class="card">
     <div class="card-header"><span class="card-title">Contract Details</span></div>
     <div class="card-body">
-      <form method="POST" action="{{ url_for('contracts_new') }}" id="new-contract-form">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
+      <!-- Mode switcher -->
+      <div style="display:flex;gap:0;border:1px solid var(--gray-200);border-radius:var(--radius);overflow:hidden;margin-bottom:24px">
+        <button type="button" id="mode-create-btn" onclick="setMode('create')"
+          style="flex:1;padding:10px 0;font-size:13px;font-weight:600;border:none;cursor:pointer;
+                 background:var(--navy);color:#fff;transition:background .15s">
+          ✏️ Create New Contract
+        </button>
+        <button type="button" id="mode-import-btn" onclick="setMode('import')"
+          style="flex:1;padding:10px 0;font-size:13px;font-weight:600;border:none;cursor:pointer;
+                 background:var(--gray-100);color:var(--gray-600);transition:background .15s">
+          📂 Import Existing Document
+        </button>
+      </div>
+
+      <form method="POST" action="{{ url_for('contracts_new') }}" id="new-contract-form"
+            enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="initial_status" id="initial-status-hidden" value="draft">
+
+        <!-- ── Common fields ────────────────────────────────────────────── -->
         <div class="form-group">
           <label class="form-label">Contract Title <span class="required">*</span></label>
           <input type="text" name="title" id="contract-title" class="form-control"
                  value="{{ contract.title if contract else '' }}" required
-                 placeholder="e.g. Web Development Services — Acme Corp 2025">
+                 placeholder="e.g. Web Development Services — Acme Corp 2026">
         </div>
 
         <div class="form-row">
@@ -43,7 +61,8 @@
               Need a new contact? <a href="{{ url_for('clients_new') }}" target="_blank">Add one →</a>
             </div>
           </div>
-          <div class="form-group">
+          <!-- Template selector — hidden in Import mode -->
+          <div class="form-group" id="template-selector-wrap">
             <label class="form-label">Template <span class="text-muted">(optional)</span></label>
             <select name="template_id" id="template_id" class="form-control">
               <option value="">No template — start blank</option>
@@ -79,26 +98,57 @@
 
         <div class="form-group">
           <label class="form-label">Notes</label>
-          <textarea name="notes" class="form-control" rows="3"
-                    placeholder="Internal notes about this contract…">{{ contract.notes if contract else '' }}</textarea>
+          <textarea name="notes" class="form-control" rows="2"
+                    placeholder="Internal notes…">{{ contract.notes if contract else '' }}</textarea>
         </div>
 
-        <!-- ── Template Fields ──────────────────────────────────────────── -->
-        <div id="template-fields-container"></div>
+        <!-- ── CREATE mode: template fields + optional blank content ──── -->
+        <div id="create-mode-section">
+          <div id="template-fields-container"></div>
 
-        <!-- ── Blank-contract initial content ──────────────────────────── -->
-        <div id="initial-content-wrap">
-          <div class="form-group" style="margin-top:16px">
-            <label class="form-label">Initial Content
-              <span class="text-muted">(for blank contracts)</span>
-            </label>
-            <textarea name="initial_content" class="form-control" rows="14"
-                      placeholder="Paste or type your contract content here…&#10;&#10;Leave blank if using a template above."></textarea>
+          <div id="initial-content-wrap" style="margin-top:16px">
+            <div class="form-group">
+              <label class="form-label">Initial Content
+                <span class="text-muted">(for blank contracts)</span>
+              </label>
+              <textarea name="initial_content" class="form-control" rows="12"
+                        placeholder="Paste or type your contract content here…&#10;&#10;Leave blank if using a template above."></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── IMPORT mode: file upload + stage selector ─────────────── -->
+        <div id="import-mode-section" style="display:none">
+          <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:var(--radius);padding:14px 16px;margin-bottom:18px;font-size:13px;color:#0369a1">
+            <strong>Upload an existing contract document.</strong> The file content will become the first revision.
+            Supported formats: <strong>.docx</strong> (Word) and <strong>.pdf</strong>.
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Contract Document <span class="required">*</span></label>
+            <input type="file" name="document_file" id="document-file" class="form-control"
+                   accept=".docx,.doc,.pdf,.txt"
+                   style="padding:6px 10px">
+            <div class="form-hint">Word (.docx), PDF, or plain text — formatting is preserved from Word files.</div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Current Stage of this Contract</label>
+            <select id="initial-status-select" class="form-control"
+                    onchange="document.getElementById('initial-status-hidden').value = this.value">
+              <option value="draft">Draft — still being prepared</option>
+              <option value="in_review">In Review — under internal review</option>
+              <option value="approved">Approved — ready to send for signature</option>
+              <option value="finalized">Finalized — sent for signature</option>
+              <option value="partially_executed">Partially Executed — some parties have signed</option>
+              <option value="fully_executed">Fully Executed — all parties have signed ✓</option>
+            </select>
+            <div class="form-hint">Setting the correct stage means it shows up accurately in your contract list.</div>
           </div>
         </div>
 
         <div class="form-actions">
-          <button type="submit" class="btn btn-primary">Create Contract</button>
+          <button type="submit" class="btn btn-primary" id="submit-btn">Create Contract</button>
           <a href="{{ url_for('contracts_list') }}" class="btn btn-secondary">Cancel</a>
         </div>
       </form>
@@ -116,69 +166,80 @@
   border-radius: var(--radius);
   margin-top: 20px;
 }
-#template-fields-container .fields-card .card-header {
-  padding: 12px 16px;
-  background: transparent;
-}
-#template-fields-container .fields-card .card-body {
-  padding: 16px;
-}
-.field-inputs-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-}
-@media (max-width: 600px) {
-  .field-inputs-grid { grid-template-columns: 1fr; }
-}
+#template-fields-container .fields-card .card-header { padding: 12px 16px; background: transparent; }
+#template-fields-container .fields-card .card-body  { padding: 16px; }
+.field-inputs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 600px) { .field-inputs-grid { grid-template-columns: 1fr; } }
 .field-chip {
   display: inline-block;
-  background: #e0e7ff;
-  color: #3730a3;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 7px;
-  border-radius: 4px;
-  margin-bottom: 4px;
-  font-family: monospace;
+  background: #e0e7ff; color: #3730a3;
+  font-size: 11px; font-weight: 600;
+  padding: 2px 7px; border-radius: 4px;
+  margin-bottom: 4px; font-family: monospace;
 }
-.prefill-badge {
-  font-size: 11px;
-  color: var(--success);
-  font-weight: 500;
-  margin-left: 6px;
-}
-.fields-loading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--gray-500);
-  font-size: 13px;
-  padding: 12px 0;
-}
+.prefill-badge { font-size: 11px; color: var(--success); font-weight: 500; margin-left: 6px; }
+.fields-loading { display: flex; align-items: center; gap: 8px; color: var(--gray-500); font-size: 13px; padding: 12px 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>
+
 <script>
 (function () {
-  const templateSel  = document.getElementById('template_id');
-  const clientSel    = document.getElementById('client_id');
-  const fieldsWrap   = document.getElementById('template-fields-container');
-  const contentWrap  = document.getElementById('initial-content-wrap');
-  const titleInput   = document.getElementById('contract-title');
+  // ── Mode switcher ─────────────────────────────────────────────────────────
+  const createBtn   = document.getElementById('mode-create-btn');
+  const importBtn   = document.getElementById('mode-import-btn');
+  const createSec   = document.getElementById('create-mode-section');
+  const importSec   = document.getElementById('import-mode-section');
+  const tplWrap     = document.getElementById('template-selector-wrap');
+  const submitBtn   = document.getElementById('submit-btn');
+  const docFile     = document.getElementById('document-file');
 
-  // Map field name keywords → client data attributes
+  function setMode(mode) {
+    if (mode === 'import') {
+      createBtn.style.background = 'var(--gray-100)';
+      createBtn.style.color      = 'var(--gray-600)';
+      importBtn.style.background = 'var(--navy)';
+      importBtn.style.color      = '#fff';
+      createSec.style.display    = 'none';
+      importSec.style.display    = '';
+      tplWrap.style.display      = 'none';
+      docFile.required           = true;
+      submitBtn.textContent      = '📂 Import Contract';
+    } else {
+      createBtn.style.background = 'var(--navy)';
+      createBtn.style.color      = '#fff';
+      importBtn.style.background = 'var(--gray-100)';
+      importBtn.style.color      = 'var(--gray-600)';
+      createSec.style.display    = '';
+      importSec.style.display    = 'none';
+      tplWrap.style.display      = '';
+      docFile.required           = false;
+      document.getElementById('initial-status-hidden').value = 'draft';
+      submitBtn.textContent      = 'Create Contract';
+    }
+  }
+
+  // Expose globally so the inline onclick attributes work
+  window.setMode = setMode;
+
+  // ── Template field loading ────────────────────────────────────────────────
+  const templateSel = document.getElementById('template_id');
+  const clientSel   = document.getElementById('client_id');
+  const fieldsWrap  = document.getElementById('template-fields-container');
+  const contentWrap = document.getElementById('initial-content-wrap');
+  const titleInput  = document.getElementById('contract-title');
+
   const PREFILL_MAP = [
-    [['client_name','client name','clientname','full_name','fullname','your_name','name'],    'name'],
-    [['company','organization','org','employer','business'],                                  'company'],
-    [['email','e-mail','mail'],                                                               'email'],
-    [['phone','telephone','tel','mobile','cell'],                                             'phone'],
-    [['address','addr','location','street'],                                                  'address'],
+    [['client_name','client name','clientname','full_name','fullname','your_name','name'], 'name'],
+    [['company','organization','org','employer','business'],                               'company'],
+    [['email','e-mail','mail'],                                                            'email'],
+    [['phone','telephone','tel','mobile','cell'],                                          'phone'],
+    [['address','addr','location','street'],                                               'address'],
   ];
 
-  /** Return the client data-* value that best matches a field name, or '' */
   function guessClientValue(fieldName) {
     const key = fieldName.toLowerCase().replace(/_/g, ' ');
-    for (const [keywords, attr] of PREFILL_MAP) {
-      if (keywords.some(kw => key.includes(kw))) {
+    for (const [kws, attr] of PREFILL_MAP) {
+      if (kws.some(kw => key.includes(kw))) {
         const opt = clientSel.options[clientSel.selectedIndex];
         return opt ? (opt.dataset[attr] || '') : '';
       }
@@ -186,29 +247,27 @@
     return '';
   }
 
-  /** Auto-set title when both client and template are chosen and title is empty */
   function maybeSetTitle() {
     if (titleInput.value.trim()) return;
-    const tmplText  = templateSel.options[templateSel.selectedIndex]?.text?.split(' (')[0] || '';
-    const clientOpt = clientSel.options[clientSel.selectedIndex];
-    const clientName = clientOpt ? (clientOpt.dataset.name || clientOpt.text?.split(' —')[0] || '') : '';
-    if (tmplText && clientName && tmplText !== 'No template — start blank') {
-      const year = new Date().getFullYear();
-      titleInput.value = `${tmplText} — ${clientName} ${year}`;
+    const tmpl   = templateSel.options[templateSel.selectedIndex]?.text?.split(' (')[0] || '';
+    const cOpt   = clientSel.options[clientSel.selectedIndex];
+    const cName  = cOpt ? (cOpt.dataset.name || cOpt.text?.split(' —')[0] || '') : '';
+    if (tmpl && cName && tmpl !== 'No template — start blank') {
+      titleInput.value = `${tmpl} — ${cName} ${new Date().getFullYear()}`;
     }
   }
 
-  /** Re-fill all visible field inputs from current client selection */
   function refreshPrefills() {
     fieldsWrap.querySelectorAll('.field-input[data-field]').forEach(inp => {
       const suggested = guessClientValue(inp.dataset.field);
-      if (suggested && !inp.dataset.userEdited) {
-        inp.value = suggested;
-      }
+      if (suggested && !inp.dataset.userEdited) inp.value = suggested;
     });
   }
 
-  /** Build the field-inputs card from a list of field names */
+  function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
   function renderFields(fields) {
     if (!fields.length) {
       fieldsWrap.innerHTML = `
@@ -219,62 +278,48 @@
         </div>`;
       return;
     }
-
     const rows = fields.map(f => {
       const suggested = guessClientValue(f);
-      const label     = f.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      const label     = f.replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
       const badge     = suggested ? '<span class="prefill-badge">✓ pre-filled from client</span>' : '';
-      return `
-        <div class="form-group" style="margin-bottom:0">
-          <label class="form-label" style="margin-bottom:4px">
-            <span class="field-chip">{{${f}}}</span>
-            ${label}${badge}
-          </label>
-          <input type="text" name="field_${f}" class="form-control field-input"
-                 data-field="${f}" value="${escHtml(suggested)}"
-                 placeholder="Enter value for ${escHtml(label)}…">
-        </div>`;
+      return `<div class="form-group" style="margin-bottom:0">
+        <label class="form-label" style="margin-bottom:4px">
+          <span class="field-chip">{{${f}}}</span> ${label}${badge}
+        </label>
+        <input type="text" name="field_${f}" class="form-control field-input"
+               data-field="${f}" value="${escHtml(suggested)}"
+               placeholder="Enter value for ${escHtml(label)}…">
+      </div>`;
     }).join('');
-
     fieldsWrap.innerHTML = `
       <div class="fields-card card">
         <div class="card-header">
           <span class="card-title" style="font-size:13px">Template Fields</span>
-          <span class="text-xs text-muted" style="margin-left:8px">${fields.length} placeholder${fields.length !== 1 ? 's' : ''} found — fill in the client-specific details below</span>
+          <span class="text-xs text-muted" style="margin-left:8px">${fields.length} placeholder${fields.length !== 1 ? 's' : ''} — fill in the client-specific details</span>
         </div>
         <div class="card-body" style="padding-top:4px">
           <div class="field-inputs-grid">${rows}</div>
           <p class="text-xs text-muted" style="margin-top:14px;margin-bottom:0">
             💡 Each value replaces the matching <code>{{PLACEHOLDER}}</code> in the contract text.
-            Leave a field blank to keep the placeholder visible in the draft.
           </p>
         </div>
       </div>`;
-
-    // Track user edits so we don't overwrite them on client change
     fieldsWrap.querySelectorAll('.field-input').forEach(inp => {
       inp.addEventListener('input', () => { inp.dataset.userEdited = '1'; });
     });
   }
 
-  function escHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-
-  /** Fetch template fields from API and render them */
   async function loadTemplateFields(templateId) {
     fieldsWrap.innerHTML = `
       <div class="fields-card card" style="margin-top:20px">
         <div class="card-body">
           <div class="fields-loading">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite">
-              <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-            </svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 style="animation:spin 1s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
             Loading template fields…
           </div>
         </div>
       </div>`;
-
     try {
       const resp = await fetch(`/api/templates/${templateId}/fields`);
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -305,15 +350,11 @@
   templateSel.addEventListener('change', onTemplateChange);
   clientSel.addEventListener('change', () => { refreshPrefills(); maybeSetTitle(); });
 
-  // Initialise if template pre-selected via URL param
   if (templateSel.value) {
     contentWrap.style.display = 'none';
     loadTemplateFields(templateSel.value);
   }
 })();
 </script>
-<style>
-@keyframes spin { to { transform: rotate(360deg); } }
-</style>
 {% endraw %}
 {% endblock %}

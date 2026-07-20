@@ -607,6 +607,12 @@ tr:hover td { background: var(--gray-50); }
 
 .badge-expired { background: #fee2e2; color: #991b1b; }
 .badge-expired .badge-dot { background: var(--danger); }
+.badge-partially-executed { background: #fff7ed; color: #9a3412; }
+.badge-partially-executed .badge-dot { background: #ea580c; }
+.badge-fully-executed { background: #ccfbf1; color: #134e4a; }
+.badge-fully-executed .badge-dot { background: #0d9488; }
+.badge-purple, .badge-finalized { background: #ede9fe; color: #5b21b6; }
+.badge-purple .badge-dot, .badge-finalized .badge-dot { background: #7c3aed; }
 
 .badge-client { background: #ede9fe; color: #5b21b6; }
 .badge-vendor { background: #fce7f3; color: #9d174d; }
