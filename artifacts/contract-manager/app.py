@@ -928,12 +928,12 @@ def detect_fields_api():
 
 # ─── Init ─────────────────────────────────────────────────────────────────────
 
-def create_tables():
-    with app.app_context():
-        db.create_all()
+# Create tables on startup regardless of how the app is launched (gunicorn or
+# direct). This is idempotent — SQLAlchemy skips tables that already exist.
+with app.app_context():
+    db.create_all()
 
 
 if __name__ == '__main__':
-    create_tables()
     port = int(os.environ.get('PORT', 8000))
     app.run(host='0.0.0.0', port=port, debug=False)
