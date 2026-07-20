@@ -9,7 +9,7 @@ from flask import (Flask, render_template, redirect, url_for, flash, request,
                    jsonify, send_file, abort, session)
 from markupsafe import Markup, escape
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
-from flask_wtf.csrf import CSRFProtect
+from flask_wtf.csrf import CSRFProtect, CSRFError
 from werkzeug.utils import secure_filename
 
 from models import db, User, Client, ContractTemplate, Contract, ContractRevision, ContractFieldValue, AuditLog
@@ -45,14 +45,26 @@ except ImportError:
 
 app = Flask(__name__)
 
+# Respect X-Forwarded-* headers from nginx/reverse-proxy so Flask sees the
+# real scheme and host.  x_for=1 trusts one proxy hop (nginx → gunicorn).
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
 # Configuration
-app.config['SECRET_KEY'] = os.environ.get('SESSION_SECRET', 'dev-secret-key-change-in-prod')
+# Guard against SESSION_SECRET being set to an empty string in the environment.
+_secret = os.environ.get('SESSION_SECRET') or 'dev-secret-key-change-in-prod'
+app.config['SECRET_KEY'] = _secret
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'postgresql://localhost/contracts')
 if app.config['SQLALCHEMY_DATABASE_URI'].startswith('postgres://'):
     app.config['SQLALCHEMY_DATABASE_URI'] = app.config['SQLALCHEMY_DATABASE_URI'].replace('postgres://', 'postgresql://', 1)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = os.path.join(os.path.dirname(__file__), 'uploads')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
+# Disable CSRF token expiry — the default 1-hour limit causes spurious
+# failures when a page stays open or a reverse proxy delays the request.
+app.config['WTF_CSRF_TIME_LIMIT'] = None
+# Ensure session cookies work over plain HTTP on local/production servers.
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 ALLOWED_EXTENSIONS = {'txt', 'pdf', 'docx', 'doc'}
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -64,6 +76,13 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 login_manager.login_message = 'Please log in to access this page.'
 login_manager.login_message_category = 'info'
+
+
+@app.errorhandler(CSRFError)
+def handle_csrf_error(e):
+    """Show a friendly message instead of a raw 400 and send the user back."""
+    flash('Your session expired or the form token was invalid — please try again.', 'error')
+    return redirect(request.referrer or url_for('dashboard')), 302
 
 
 @app.template_filter('render_content')
