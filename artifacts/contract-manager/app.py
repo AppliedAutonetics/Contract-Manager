@@ -247,12 +247,28 @@ def apply_field_values(content, field_values):
     return content
 
 
-def generate_contract_number():
+def generate_contract_number(offset=0):
+    """Return the next unused CTR-YYYY-NNNN contract number.
+
+    Uses MAX of existing sequence numbers rather than COUNT so that
+    deletions or gaps never produce a duplicate.  Pass offset>0 to skip
+    ahead when the caller detects a collision and needs to retry.
+    """
     year = datetime.utcnow().year
-    count = Contract.query.filter(
-        db.extract('year', Contract.created_at) == year
-    ).count() + 1
-    return f'CTR-{year}-{count:04d}'
+    prefix = f'CTR-{year}-'
+    rows = db.session.execute(
+        db.text("SELECT contract_number FROM contracts WHERE contract_number LIKE :p"),
+        {'p': prefix + '%'}
+    ).fetchall()
+    max_seq = 0
+    for (num,) in rows:
+        try:
+            seq = int(num[len(prefix):])
+            if seq > max_seq:
+                max_seq = seq
+        except (ValueError, IndexError):
+            pass
+    return f'{prefix}{max_seq + 1 + offset:04d}'
 
 
 def log_action(action, resource_type=None, resource_id=None, contract_id=None, details=None):
@@ -1479,7 +1495,19 @@ def contracts_new():
             return render_template('contracts/new.html', clients=clients, templates=templates, contract=contract)
 
         db.session.add(contract)
-        db.session.flush()
+        # Retry up to 5 times if a concurrent request grabbed the same number
+        for _attempt in range(5):
+            try:
+                db.session.flush()
+                break
+            except Exception as _flush_err:
+                _err = str(_flush_err).lower()
+                if 'unique' in _err and 'contract_number' in _err:
+                    db.session.rollback()
+                    contract.contract_number = generate_contract_number(offset=_attempt + 1)
+                    db.session.add(contract)
+                else:
+                    raise
 
         # ── Uploaded document (import mode) ──────────────────────────────────
         uploaded_file_name = None
