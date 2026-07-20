@@ -173,6 +173,37 @@
           <a href="{{ url_for('revisions_new', contract_id=contract.id) }}" class="btn btn-primary" style="justify-content:center">
             + Upload Revision
           </a>
+          <hr style="margin:4px 0;border-color:var(--gray-200)">
+          <button type="button" class="btn btn-ghost" style="justify-content:center;color:var(--danger)"
+                  onclick="document.getElementById('delete-modal').style.display='flex'">
+            🗑 Delete Contract
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Delete confirmation modal -->
+    <div id="delete-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;align-items:center;justify-content:center">
+      <div style="background:#fff;border-radius:var(--radius);padding:28px 32px;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.2)">
+        <div style="font-size:22px;margin-bottom:8px">⚠️ Delete contract?</div>
+        <p style="margin:0 0 6px;font-size:14px;color:var(--gray-700)">
+          You are about to permanently delete:
+        </p>
+        <p style="margin:0 0 18px;font-weight:700;font-size:14px">{{ contract.title }}</p>
+        <p style="margin:0 0 24px;font-size:13px;color:var(--gray-500)">
+          This will remove all revisions, field values, and associated files. This action cannot be undone.
+        </p>
+        <div style="display:flex;gap:10px;justify-content:flex-end">
+          <button type="button" class="btn btn-secondary"
+                  onclick="document.getElementById('delete-modal').style.display='none'">
+            Cancel
+          </button>
+          <form method="POST" action="{{ url_for('contracts_delete', contract_id=contract.id) }}" style="margin:0">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn" style="background:var(--danger);color:#fff;border-color:var(--danger)">
+              Delete permanently
+            </button>
+          </form>
         </div>
       </div>
     </div>

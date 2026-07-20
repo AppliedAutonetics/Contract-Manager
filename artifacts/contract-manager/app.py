@@ -1132,6 +1132,34 @@ def contracts_status(contract_id):
     return redirect(url_for('contracts_detail', contract_id=contract_id))
 
 
+@app.route('/contracts/<int:contract_id>/delete', methods=['POST'])
+@login_required
+def contracts_delete(contract_id):
+    contract = Contract.query.filter_by(id=contract_id, created_by=current_user.id).first_or_404()
+    title = contract.title
+
+    # Remove uploaded revision files from disk
+    for rev in contract.revisions.all():
+        if rev.file_path and os.path.exists(rev.file_path):
+            try:
+                os.remove(rev.file_path)
+            except OSError:
+                pass
+
+    # Delete child rows before deleting the contract (FK constraints)
+    ContractFieldValue.query.filter_by(contract_id=contract.id).delete()
+    ContractRevision.query.filter_by(contract_id=contract.id).delete()
+    # Null-out audit log references so the deletion history is preserved
+    AuditLog.query.filter_by(contract_id=contract.id).update({'contract_id': None})
+
+    log_action('delete_contract', 'contract', contract.id,
+               details=f'Deleted contract: {title} ({contract.contract_number})')
+    db.session.delete(contract)
+    db.session.commit()
+    flash(f'Contract "{title}" has been permanently deleted.', 'success')
+    return redirect(url_for('contracts_list'))
+
+
 # ─── Template Parsing API ─────────────────────────────────────────────────────
 
 @app.route('/api/detect-fields', methods=['POST'])
