@@ -828,20 +828,80 @@ tr:hover td { background: var(--gray-50); }
   white-space: normal;
   font-family: 'Georgia', serif;
 }
+
+/* ── Headings ── */
 .docx-preview h1, .docx-preview h2, .docx-preview h3,
 .docx-preview h4, .docx-preview h5, .docx-preview h6 {
   color: var(--primary);
   margin: 1.2em 0 0.4em;
   line-height: 1.3;
+  font-weight: 700;
 }
-.docx-preview h1 { font-size: 1.5em; }
-.docx-preview h2 { font-size: 1.25em; }
-.docx-preview h3 { font-size: 1.1em; }
-.docx-preview p  { margin: 0.6em 0; }
-.docx-preview ul, .docx-preview ol { padding-left: 1.6em; margin: 0.6em 0; }
-.docx-preview li { margin: 0.3em 0; }
-.docx-preview strong { font-weight: 700; }
-.docx-preview em    { font-style: italic; }
+.docx-preview h1 { font-size: 1.6em; }
+.docx-preview h2 { font-size: 1.3em; }
+.docx-preview h3 { font-size: 1.15em; }
+.docx-preview h4 { font-size: 1.05em; }
+.docx-preview h5, .docx-preview h6 { font-size: 1em; }
+
+/* ── Special Word paragraph styles ── */
+.docx-preview .doc-title {
+  font-size: 1.8em;
+  font-weight: 700;
+  text-align: center;
+  color: var(--primary);
+  margin: 0.5em 0 0.2em;
+}
+.docx-preview .doc-subtitle {
+  font-size: 1.1em;
+  text-align: center;
+  color: var(--gray-500);
+  margin: 0 0 1em;
+}
+.docx-preview .list-paragraph {
+  margin-left: 2em;
+}
+.docx-preview .caption {
+  font-size: 0.85em;
+  color: var(--gray-500);
+  text-align: center;
+  font-style: italic;
+  margin: 0.3em 0;
+}
+
+/* ── Paragraphs & spacing ── */
+.docx-preview p  { margin: 0.55em 0; line-height: 1.65; }
+.docx-preview p:empty { margin: 0.35em 0; min-height: 0.5em; }
+
+/* ── Inline formatting ── */
+.docx-preview strong, .docx-preview b { font-weight: 700; }
+.docx-preview em, .docx-preview i     { font-style: italic; }
+.docx-preview u                        { text-decoration: underline; }
+.docx-preview s, .docx-preview strike,
+.docx-preview del                      { text-decoration: line-through; }
+.docx-preview sub                      { vertical-align: sub;   font-size: 0.8em; }
+.docx-preview sup                      { vertical-align: super; font-size: 0.8em; }
+.docx-preview a                        { color: #1d4ed8; text-decoration: underline; }
+.docx-preview code                     { font-family: 'Courier New', monospace; font-size: 0.9em;
+                                         background: var(--gray-50); border-radius: 3px;
+                                         padding: 1px 4px; border: 1px solid var(--gray-200); }
+.docx-preview pre                      { font-family: 'Courier New', monospace; font-size: 0.88em;
+                                         background: var(--gray-50); border: 1px solid var(--gray-200);
+                                         border-radius: 6px; padding: 12px 16px; overflow-x: auto; }
+
+/* ── Blockquote ── */
+.docx-preview blockquote {
+  margin: 0.8em 0 0.8em 1.5em;
+  padding-left: 0.8em;
+  border-left: 3px solid var(--gray-300);
+  color: var(--gray-500);
+  font-style: italic;
+}
+
+/* ── Lists ── */
+.docx-preview ul, .docx-preview ol { padding-left: 1.8em; margin: 0.5em 0 0.7em; }
+.docx-preview li { margin: 0.25em 0; line-height: 1.55; }
+
+/* ── Tables ── */
 .docx-preview table {
   border-collapse: collapse;
   width: 100%;
@@ -852,9 +912,16 @@ tr:hover td { background: var(--gray-50); }
   border: 1px solid var(--gray-300);
   padding: 6px 10px;
   vertical-align: top;
+  word-break: break-word;
 }
-.docx-preview table th { background: var(--gray-50); font-weight: 600; }
-/* Highlight {{FIELD_NAME}} placeholders in previews */
+.docx-preview table th {
+  background: var(--gray-50);
+  font-weight: 600;
+  color: var(--primary);
+}
+.docx-preview table tr:nth-child(even) td { background: #fafafa; }
+
+/* ── Highlight {{FIELD_NAME}} placeholders in previews ── */
 .docx-preview .field-highlight,
 .contract-text .field-highlight {
   background: #fef9c3;

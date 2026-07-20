@@ -61,8 +61,18 @@ p[style-name='Heading 2'] => h2:fresh
 p[style-name='Heading 3'] => h3:fresh
 p[style-name='Heading 4'] => h4:fresh
 p[style-name='Heading 5'] => h5:fresh
-p[style-name='Title'] => h1:fresh
-p[style-name='Subtitle'] => h2:fresh
+p[style-name='Heading 6'] => h6:fresh
+p[style-name='Title'] => h1.doc-title:fresh
+p[style-name='Subtitle'] => p.doc-subtitle:fresh
+p[style-name='Quote'] => blockquote:fresh
+p[style-name='Intense Quote'] => blockquote:fresh
+p[style-name='Body Text'] => p:fresh
+p[style-name='Body Text 2'] => p:fresh
+p[style-name='Body Text 3'] => p:fresh
+p[style-name='List Paragraph'] => p.list-paragraph:fresh
+p[style-name='Caption'] => p.caption:fresh
+r[style-name='Strong'] => strong
+r[style-name='Emphasis'] => em
 b => strong
 i => em
 u => u
@@ -138,17 +148,48 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
+def fix_split_placeholders(html):
+    """Strip HTML tags that mammoth may have inserted inside {{...}} placeholders.
+
+    When Word stores a placeholder like {{CLIENT_NAME}} as multiple runs with
+    mixed formatting, mammoth wraps each run separately, producing things like
+    {{<strong>CLIENT</strong>_NAME}} that the regex cannot match.  This step
+    strips any inline tags found between {{ and }} so the markers are clean.
+    """
+    return re.sub(
+        r'\{\{((?:[^{}]|<[^>]+>)*?)\}\}',
+        lambda m: '{{' + re.sub(r'<[^>]+>', '', m.group(1)).strip() + '}}',
+        html,
+        flags=re.DOTALL,
+    )
+
+
 def extract_template_fields(content):
-    """Find all {{FIELD_NAME}} markers in template content."""
+    """Find all {{FIELD_NAME}} markers in template content (HTML or plain text)."""
     pattern = r'\{\{([A-Z_][A-Z0-9_]*)\}\}'
-    fields = list(dict.fromkeys(re.findall(pattern, content)))
-    return fields
+    if is_html_content(content):
+        # Clean split placeholders first, then also search the plain-text
+        # version to catch any that are still split across separate elements.
+        cleaned = fix_split_placeholders(content)
+        import html as _html_mod
+        plain = _html_mod.unescape(re.sub(r'<[^>]+>', '', cleaned))
+        fields = list(dict.fromkeys(
+            re.findall(pattern, cleaned) + re.findall(pattern, plain)
+        ))
+        return fields
+    return list(dict.fromkeys(re.findall(pattern, content)))
 
 
 def apply_field_values(content, field_values):
-    """Replace {{FIELD_NAME}} markers with actual values."""
+    """Replace {{FIELD_NAME}} markers with actual values.
+
+    For HTML content the split-placeholder cleaner runs first so that markers
+    like {{<strong>CLIENT_NAME</strong>}} are normalised before substitution.
+    """
+    if is_html_content(content):
+        content = fix_split_placeholders(content)
     for name, value in field_values.items():
-        content = content.replace('{{' + name + '}}', value or f'[{name}]')
+        content = content.replace('{{' + name + '}}', value if value else f'[{name}]')
     return content
 
 
@@ -198,10 +239,14 @@ def extract_text_from_file(file_path, filename):
                         f,
                         style_map=MAMMOTH_STYLE_MAP,
                         convert_image=mammoth.images.inline(
-                            lambda image: {'src': ''}  # strip images — not needed in contract text
-                        )
+                            lambda image: {'src': ''}  # omit images — contract text only
+                        ),
                     )
-                return result.value  # HTML string
+                html = result.value
+                # Clean up any {{FIELD_NAME}} placeholders that mammoth may have
+                # split across multiple inline-formatting runs.
+                html = fix_split_placeholders(html)
+                return html
             elif DOCX_AVAILABLE:
                 doc = DocxDocument(file_path)
                 return '\n'.join([para.text for para in doc.paragraphs])
@@ -390,27 +435,65 @@ def _generate_pdf_html(contract, html_body, revision=None):
 <meta charset="UTF-8">
 <style>
   @page {{ margin: 1in; }}
-  body {{ font-family: Arial, sans-serif; font-size: 10pt; color: #374151; }}
-  .header {{ text-align: center; border-bottom: 2px solid #1a2742; padding-bottom: 12px; margin-bottom: 16px; }}
-  .title {{ font-size: 18pt; font-weight: bold; color: #1a2742; margin: 0 0 4px 0; }}
-  .subtitle {{ font-size: 10pt; color: #64748b; margin: 2px 0; }}
-  .meta {{ width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 9.5pt; }}
-  .meta td {{ padding: 5px 8px; border: 0.5px solid #e2e8f0; }}
+  body {{ font-family: Arial, sans-serif; font-size: 10pt; color: #374151; line-height: 1.55; }}
+
+  /* ── Page header ── */
+  .header {{ text-align: center; border-bottom: 2pt solid #1a2742;
+             padding-bottom: 12pt; margin-bottom: 16pt; }}
+  .title   {{ font-size: 18pt; font-weight: bold; color: #1a2742; margin: 0 0 4pt 0; }}
+  .subtitle {{ font-size: 10pt; color: #64748b; margin: 2pt 0; }}
+
+  /* ── Metadata table ── */
+  .meta {{ width: 100%; border-collapse: collapse; margin-bottom: 16pt; font-size: 9pt; }}
+  .meta td {{ padding: 5pt 8pt; border: 0.5pt solid #cbd5e1; }}
   .meta .lbl {{ font-weight: bold; color: #1a2742; width: 18%; background: #f8fafc; }}
-  .content {{ margin-top: 16px; line-height: 1.6; }}
-  .content h1 {{ font-size: 14pt; color: #1a2742; }}
-  .content h2 {{ font-size: 12pt; color: #1a2742; }}
-  .content h3 {{ font-size: 11pt; color: #1a2742; }}
-  .content table {{ border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.5pt; }}
-  .content table td, .content table th {{ border: 1px solid #374151; padding: 5px 8px; vertical-align: top; word-wrap: break-word; }}
-  .content table th {{ font-weight: bold; background: #f8fafc; color: #1a2742; }}
-  .content table tr:nth-child(even) td {{ background: #f8fafc; }}
-  .content ul, .content ol {{ margin: 4px 0 8px 20px; padding: 0; }}
-  .content li {{ margin-bottom: 3px; line-height: 1.5; }}
-  .content strong, .content b {{ font-weight: bold; }}
-  .content em, .content i {{ font-style: italic; }}
-  .footer {{ border-top: 1px solid #e2e8f0; margin-top: 32px; padding-top: 6px;
-             text-align: center; font-size: 8.5pt; color: #64748b; }}
+
+  /* ── Contract body ── */
+  .content {{ margin-top: 16pt; }}
+
+  /* Headings */
+  h1, .doc-title {{ font-size: 14pt; font-weight: bold; color: #1a2742;
+                    margin: 12pt 0 5pt 0; }}
+  h2 {{ font-size: 12pt; font-weight: bold; color: #1a2742; margin: 10pt 0 4pt 0; }}
+  h3 {{ font-size: 11pt; font-weight: bold; color: #374151; margin: 8pt 0 3pt 0; }}
+  h4, h5, h6 {{ font-size: 10pt; font-weight: bold; margin: 6pt 0 2pt 0; }}
+
+  /* Paragraphs */
+  p {{ margin: 3pt 0 5pt 0; }}
+  .doc-subtitle {{ font-size: 11pt; color: #6b7280; text-align: center;
+                   margin: 2pt 0 8pt 0; }}
+  .list-paragraph {{ margin-left: 18pt; }}
+  .caption {{ font-size: 9pt; color: #6b7280; font-style: italic; text-align: center; }}
+
+  /* Inline formatting */
+  strong, b {{ font-weight: bold; }}
+  em, i {{ font-style: italic; }}
+  u {{ text-decoration: underline; }}
+  s, strike, del {{ text-decoration: line-through; }}
+  sub {{ vertical-align: sub; font-size: 8pt; }}
+  sup {{ vertical-align: super; font-size: 8pt; }}
+  a {{ color: #1d4ed8; text-decoration: underline; }}
+  code, pre {{ font-family: Courier, monospace; font-size: 9pt;
+               background: #f8fafc; border: 0.5pt solid #e2e8f0;
+               padding: 0 3pt; }}
+
+  /* Blockquote */
+  blockquote {{ margin: 6pt 0 6pt 20pt; padding-left: 8pt;
+                border-left: 2pt solid #d1d5db; color: #6b7280; }}
+
+  /* Tables */
+  table {{ border-collapse: collapse; width: 100%; margin: 8pt 0; font-size: 9pt; }}
+  td, th {{ border: 0.5pt solid #374151; padding: 4pt 7pt;
+            vertical-align: top; word-break: break-word; }}
+  th {{ font-weight: bold; background: #f1f5f9; color: #1a2742; }}
+
+  /* Lists */
+  ul, ol {{ margin: 3pt 0 6pt 0; padding-left: 18pt; }}
+  li {{ margin-bottom: 2pt; line-height: 1.45; }}
+
+  /* Footer */
+  .footer {{ border-top: 0.5pt solid #e2e8f0; margin-top: 32pt; padding-top: 6pt;
+             text-align: center; font-size: 8pt; color: #64748b; }}
 </style>
 </head>
 <body>
@@ -467,110 +550,173 @@ def _generate_pdf_html(contract, html_body, revision=None):
     return buf
 
 
-def _add_inline_to_para(para, node):
-    """Recursively add inline HTML content (bold, italic, text) to a docx paragraph."""
+def _get_para_align(element):
+    """Read text-align from an element's style attribute and return WD_ALIGN_PARAGRAPH."""
+    style = element.get('style', '')
+    classes = element.get('class', [])
+    if isinstance(classes, str):
+        classes = classes.split()
+    # Class-implied alignment
+    if any(c in classes for c in ('doc-title', 'doc-subtitle', 'caption')):
+        return WD_ALIGN_PARAGRAPH.CENTER
+    # Inline style
+    for part in style.replace(' ', '').split(';'):
+        if part.startswith('text-align:'):
+            val = part.split(':', 1)[1].lower()
+            if val == 'center':  return WD_ALIGN_PARAGRAPH.CENTER
+            if val == 'right':   return WD_ALIGN_PARAGRAPH.RIGHT
+            if val == 'justify': return WD_ALIGN_PARAGRAPH.JUSTIFY
+    return None
+
+
+def _add_inline_to_para(para, node, bold=False, italic=False,
+                         underline=False, strike=False):
+    """Recursively add inline HTML into a docx paragraph, tracking nested formatting.
+
+    Formatting flags (bold, italic, etc.) accumulate as we descend so that
+    nested markup such as <strong><em>text</em></strong> is handled correctly.
+    """
     if isinstance(node, NavigableString):
         text = str(node)
         if text:
-            para.add_run(text)
+            run = para.add_run(text)
+            if bold:      run.bold           = True
+            if italic:    run.italic         = True
+            if underline: run.underline      = True
+            if strike:    run.font.strike    = True
         return
-    tag = node.name.lower() if node.name else ''
-    if tag in ('strong', 'b'):
-        run = para.add_run(node.get_text())
-        run.bold = True
-    elif tag in ('em', 'i'):
-        run = para.add_run(node.get_text())
-        run.italic = True
-    elif tag == 'u':
-        run = para.add_run(node.get_text())
-        run.underline = True
-    elif tag == 'br':
-        para.add_run().add_break()
-    elif tag in ('span', 'a', 'code', 'sup', 'sub'):
-        for child in node.children:
-            _add_inline_to_para(para, child)
-    elif node.name:
-        # Any other element — recurse
-        for child in node.children:
-            _add_inline_to_para(para, child)
+
+    if not isinstance(node, Tag):
+        return
+
+    tag = node.name.lower()
+
+    if tag == 'br':
+        para.add_run('\n')
+        return
+
+    # Accumulate inline formatting flags
+    _bold      = bold      or tag in ('strong', 'b')
+    _italic    = italic    or tag in ('em', 'i')
+    _underline = underline or tag == 'u'
+    _strike    = strike    or tag in ('s', 'strike', 'del')
+
+    for child in node.children:
+        _add_inline_to_para(para, child, _bold, _italic, _underline, _strike)
 
 
 def _html_to_docx_body(doc, html_content):
     """Parse an HTML fragment and append its content to a python-docx Document."""
     if not BS4_AVAILABLE:
-        # Fallback: strip tags and add as plain text paragraphs
-        import html as html_lib
-        plain = re.sub(r'<[^>]+>', ' ', html_content)
-        plain = html_lib.unescape(plain)
+        import html as _hl
+        plain = _hl.unescape(re.sub(r'<[^>]+>', ' ', html_content))
         for para in plain.split('\n'):
             para = para.strip()
             if para:
                 doc.add_paragraph(para)
         return
-
     soup = BeautifulSoup(html_content, 'lxml')
     body = soup.find('body') or soup
+    _add_block_children(doc, body, left_indent=None)
 
-    for element in body.children:
+
+def _add_block_children(doc, parent, left_indent=None):
+    """Walk direct children of a block element, dispatching each to _add_block_element."""
+    for element in parent.children:
         if isinstance(element, NavigableString):
             text = str(element).strip()
             if text:
-                doc.add_paragraph(text)
+                p = doc.add_paragraph(text)
+                if left_indent is not None:
+                    p.paragraph_format.left_indent = left_indent
             continue
-        if not isinstance(element, Tag):
-            continue
-        tag = element.name.lower()
+        if isinstance(element, Tag):
+            _add_block_element(doc, element, left_indent=left_indent)
 
-        if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
-            level = int(tag[1])
-            doc.add_heading(element.get_text(strip=True), level=level)
 
-        elif tag == 'p':
-            para = doc.add_paragraph()
-            for child in element.children:
+def _add_block_element(doc, element, left_indent=None):
+    """Convert one block-level HTML element into python-docx content."""
+    tag = element.name.lower()
+    classes = element.get('class', [])
+    if isinstance(classes, str):
+        classes = classes.split()
+
+    # ── Headings ────────────────────────────────────────────────────────────
+    if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
+        level = int(tag[1])
+        para = doc.add_heading('', level=level)
+        for child in element.children:
+            _add_inline_to_para(para, child)
+        align = _get_para_align(element)
+        if align is not None:
+            para.alignment = align
+        if left_indent is not None:
+            para.paragraph_format.left_indent = left_indent
+
+    # ── Paragraph ───────────────────────────────────────────────────────────
+    elif tag == 'p':
+        para = doc.add_paragraph()
+        for child in element.children:
+            _add_inline_to_para(para, child)
+        align = _get_para_align(element)
+        if align is not None:
+            para.alignment = align
+        if 'list-paragraph' in classes:
+            para.paragraph_format.left_indent = Inches(0.5)
+        elif left_indent is not None:
+            para.paragraph_format.left_indent = left_indent
+
+    # ── Lists ────────────────────────────────────────────────────────────────
+    elif tag in ('ul', 'ol'):
+        style = 'List Bullet' if tag == 'ul' else 'List Number'
+        for li in element.find_all('li', recursive=False):
+            para = doc.add_paragraph(style=style)
+            for child in li.children:
                 _add_inline_to_para(para, child)
+            if left_indent is not None:
+                para.paragraph_format.left_indent = left_indent
 
-        elif tag in ('ul', 'ol'):
-            style = 'List Bullet' if tag == 'ul' else 'List Number'
-            for li in element.find_all('li', recursive=False):
-                para = doc.add_paragraph(style=style)
-                for child in li.children:
-                    _add_inline_to_para(para, child)
+    # ── Table ────────────────────────────────────────────────────────────────
+    elif tag == 'table':
+        rows_html = element.find_all('tr')
+        if not rows_html:
+            return
+        max_cols = max((len(r.find_all(['td', 'th'])) for r in rows_html), default=0)
+        if max_cols == 0:
+            return
+        tbl = doc.add_table(rows=len(rows_html), cols=max_cols)
+        tbl.style = 'Table Grid'
+        for ri, row_el in enumerate(rows_html):
+            for ci, cell_el in enumerate(row_el.find_all(['td', 'th'])):
+                if ci >= max_cols:
+                    break
+                cell = tbl.cell(ri, ci)
+                cell.text = ''
+                para = cell.paragraphs[0]
+                is_header = cell_el.name == 'th'
+                for child in cell_el.children:
+                    _add_inline_to_para(para, child, bold=is_header)
+                c_align = _get_para_align(cell_el)
+                if c_align is not None:
+                    para.alignment = c_align
 
-        elif tag == 'table':
-            rows_html = element.find_all('tr')
-            if not rows_html:
-                continue
-            max_cols = max((len(r.find_all(['td', 'th'])) for r in rows_html), default=0)
-            if max_cols == 0:
-                continue
-            tbl = doc.add_table(rows=len(rows_html), cols=max_cols)
-            tbl.style = 'Table Grid'
-            for ri, row_el in enumerate(rows_html):
-                cells_html = row_el.find_all(['td', 'th'])
-                for ci, cell_el in enumerate(cells_html):
-                    if ci >= max_cols:
-                        break
-                    cell = tbl.cell(ri, ci)
-                    cell.text = ''
-                    para = cell.paragraphs[0]
-                    for child in cell_el.children:
-                        _add_inline_to_para(para, child)
-                    if cell_el.name == 'th':
-                        for run in para.runs:
-                            run.bold = True
+    # ── Blockquote — indented container ──────────────────────────────────────
+    elif tag == 'blockquote':
+        _add_block_children(doc, element, left_indent=Inches(0.5))
 
-        elif tag in ('div', 'section', 'article', 'blockquote'):
-            # Recurse — treat as a container
-            _html_to_docx_body(doc, str(element.decode_contents()))
+    # ── Generic containers ───────────────────────────────────────────────────
+    elif tag in ('div', 'section', 'article', 'main', 'aside', 'figure'):
+        _add_block_children(doc, element, left_indent=left_indent)
 
-        elif tag == 'hr':
-            doc.add_paragraph('─' * 60)
+    # ── Horizontal rule ──────────────────────────────────────────────────────
+    elif tag == 'hr':
+        doc.add_paragraph('─' * 60)
 
-        elif tag in ('br',):
-            doc.add_paragraph()
+    # ── Line break as spacing paragraph ──────────────────────────────────────
+    elif tag == 'br':
+        doc.add_paragraph()
 
-        # Skip: script, style, head, etc.
+    # Skip: script, style, head, noscript, etc.
 
 
 def generate_docx(contract, revision=None):
