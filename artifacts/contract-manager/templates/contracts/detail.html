@@ -58,7 +58,7 @@
       </div>
       {% if contract.latest_revision %}
       <div class="card-body">
-        <div class="contract-text">{{ contract.latest_revision.content }}</div>
+        <div class="contract-text docx-preview">{{ contract.latest_revision.content | render_content }}</div>
       </div>
       {% else %}
       <div class="empty-state" style="padding:40px">

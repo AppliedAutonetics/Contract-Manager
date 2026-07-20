@@ -823,6 +823,47 @@ tr:hover td { background: var(--gray-50); }
   box-shadow: inset 0 1px 2px rgba(0,0,0,0.03);
 }
 
+/* Word-document HTML preview — reset pre-wrap so HTML renders properly */
+.contract-text.docx-preview {
+  white-space: normal;
+  font-family: 'Georgia', serif;
+}
+.docx-preview h1, .docx-preview h2, .docx-preview h3,
+.docx-preview h4, .docx-preview h5, .docx-preview h6 {
+  color: var(--primary);
+  margin: 1.2em 0 0.4em;
+  line-height: 1.3;
+}
+.docx-preview h1 { font-size: 1.5em; }
+.docx-preview h2 { font-size: 1.25em; }
+.docx-preview h3 { font-size: 1.1em; }
+.docx-preview p  { margin: 0.6em 0; }
+.docx-preview ul, .docx-preview ol { padding-left: 1.6em; margin: 0.6em 0; }
+.docx-preview li { margin: 0.3em 0; }
+.docx-preview strong { font-weight: 700; }
+.docx-preview em    { font-style: italic; }
+.docx-preview table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+  font-size: 13px;
+}
+.docx-preview table td, .docx-preview table th {
+  border: 1px solid var(--gray-300);
+  padding: 6px 10px;
+  vertical-align: top;
+}
+.docx-preview table th { background: var(--gray-50); font-weight: 600; }
+/* Highlight {{FIELD_NAME}} placeholders in previews */
+.docx-preview .field-highlight,
+.contract-text .field-highlight {
+  background: #fef9c3;
+  border-radius: 3px;
+  padding: 0 3px;
+  font-weight: 600;
+  color: #92400e;
+}
+
 /* ── Utilities ────────────────────────────────────────────── */
 .flex { display: flex; }
 .flex-1 { flex: 1; }

@@ -20,7 +20,7 @@
         <span class="text-sm text-muted">{{ template.content|length }} characters</span>
       </div>
       <div class="card-body">
-        <div class="contract-text">{{ template.content }}</div>
+        <div class="contract-text docx-preview">{{ template.content | render_content }}</div>
       </div>
     </div>
   </div>

@@ -7,6 +7,7 @@ from io import BytesIO
 
 from flask import (Flask, render_template, redirect, url_for, flash, request,
                    jsonify, send_file, abort, session)
+from markupsafe import Markup, escape
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_wtf.csrf import CSRFProtect
 from werkzeug.utils import secure_filename
@@ -27,6 +28,20 @@ try:
     DOCX_AVAILABLE = True
 except ImportError:
     DOCX_AVAILABLE = False
+
+# mammoth: docx → HTML with formatting preserved
+try:
+    import mammoth
+    MAMMOTH_AVAILABLE = True
+except ImportError:
+    MAMMOTH_AVAILABLE = False
+
+# xhtml2pdf: HTML → PDF
+try:
+    from xhtml2pdf import pisa
+    XHTML2PDF_AVAILABLE = True
+except ImportError:
+    XHTML2PDF_AVAILABLE = False
 
 app = Flask(__name__)
 
@@ -49,6 +64,22 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 login_manager.login_message = 'Please log in to access this page.'
 login_manager.login_message_category = 'info'
+
+
+@app.template_filter('render_content')
+def render_content_filter(content):
+    """Render contract/template content safely.
+
+    HTML content (from mammoth .docx conversion) is returned as Markup so
+    Jinja2 doesn't escape it.  Plain-text content is wrapped in a <pre> so
+    line breaks and spacing are preserved.
+    """
+    if not content:
+        return Markup('')
+    if is_html_content(content):
+        return Markup(content)
+    return Markup('<pre style="white-space:pre-wrap;font-family:inherit">' +
+                  str(escape(content)) + '</pre>')
 
 
 @login_manager.user_loader
@@ -98,18 +129,35 @@ def log_action(action, resource_type=None, resource_id=None, contract_id=None, d
     db.session.add(log)
 
 
+def is_html_content(content):
+    """Return True when content is HTML (produced by mammoth from a .docx)."""
+    return bool(content and content.strip().startswith('<'))
+
+
 def extract_text_from_file(file_path, filename):
-    """Extract text content from uploaded file."""
+    """Extract content from an uploaded file.
+
+    For .docx files mammoth is preferred because it converts the document to
+    HTML, preserving bold, italic, headings, tables and lists.  The returned
+    string is an HTML fragment when mammoth is used, plain text otherwise.
+    """
     ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else ''
     try:
         if ext == 'txt':
             with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                 return f.read()
-        elif ext == 'docx' and DOCX_AVAILABLE:
-            doc = DocxDocument(file_path)
-            return '\n'.join([para.text for para in doc.paragraphs])
+        elif ext in ('docx', 'doc'):
+            if MAMMOTH_AVAILABLE:
+                with open(file_path, 'rb') as f:
+                    result = mammoth.convert_to_html(f)
+                return result.value  # HTML string
+            elif DOCX_AVAILABLE:
+                doc = DocxDocument(file_path)
+                return '\n'.join([para.text for para in doc.paragraphs])
+            else:
+                return '[Word document uploaded but python-docx / mammoth are not installed. Run: pip install mammoth]'
         else:
-            return f'[File: {filename} - content extraction not supported for this format. File stored at {file_path}]'
+            return f'[File: {filename} — content extraction not supported for this format]'
     except Exception as e:
         return f'[Error reading file: {str(e)}]'
 
@@ -219,6 +267,12 @@ def generate_pdf(contract, revision=None):
         story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor('#e2e8f0')))
         story.append(Spacer(1, 0.15 * inch))
 
+        if is_html_content(content):
+            # HTML content: delegate to xhtml2pdf which handles formatting
+            doc.build(story)
+            buffer.seek(0)
+            return _generate_pdf_html(contract, content, revision)
+
         for para_text in content.split('\n\n'):
             para_text = para_text.strip()
             if not para_text:
@@ -251,6 +305,109 @@ def generate_pdf(contract, revision=None):
     doc.build(story)
     buffer.seek(0)
     return buffer
+
+
+def _generate_pdf_html(contract, html_body, revision=None):
+    """Generate a PDF from HTML content (mammoth-converted .docx) using xhtml2pdf."""
+    status_map = {
+        'draft': 'Draft', 'in_review': 'In Review', 'approved': 'Approved',
+        'finalized': 'Finalized', 'expired': 'Expired'
+    }
+    version_line = ''
+    if revision:
+        label = f'Version {revision.version_number}' + (' — FINAL' if revision.is_finalized else '')
+        version_line = f'<p class="subtitle">{label}</p>'
+
+    start_end = ''
+    if contract.start_date:
+        end = contract.end_date.strftime('%B %d, %Y') if contract.end_date else 'N/A'
+        start_end = f'<tr><td class="lbl">Start Date</td><td>{contract.start_date.strftime("%B %d, %Y")}</td><td class="lbl">End Date</td><td>{end}</td></tr>'
+
+    value_row = ''
+    if contract.value:
+        value_row = f'<tr><td class="lbl">Contract Value</td><td>${float(contract.value):,.2f}</td><td></td><td></td></tr>'
+
+    finalized_line = ''
+    if contract.finalized_at:
+        finalized_line = f' &nbsp;|&nbsp; Finalized {contract.finalized_at.strftime("%B %d, %Y")}'
+
+    gen_time = datetime.utcnow().strftime('%B %d, %Y at %H:%M UTC')
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  @page {{ margin: 1in; }}
+  body {{ font-family: Arial, sans-serif; font-size: 10pt; color: #374151; }}
+  .header {{ text-align: center; border-bottom: 2px solid #1a2742; padding-bottom: 12px; margin-bottom: 16px; }}
+  .title {{ font-size: 18pt; font-weight: bold; color: #1a2742; margin: 0 0 4px 0; }}
+  .subtitle {{ font-size: 10pt; color: #64748b; margin: 2px 0; }}
+  .meta {{ width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 9.5pt; }}
+  .meta td {{ padding: 5px 8px; border: 0.5px solid #e2e8f0; }}
+  .meta .lbl {{ font-weight: bold; color: #1a2742; width: 18%; background: #f8fafc; }}
+  .content {{ margin-top: 16px; line-height: 1.6; }}
+  .content h1 {{ font-size: 14pt; color: #1a2742; }}
+  .content h2 {{ font-size: 12pt; color: #1a2742; }}
+  .content h3 {{ font-size: 11pt; color: #1a2742; }}
+  .content table {{ border-collapse: collapse; width: 100%; margin: 8px 0; }}
+  .content table td, .content table th {{ border: 1px solid #e2e8f0; padding: 5px 8px; }}
+  .footer {{ border-top: 1px solid #e2e8f0; margin-top: 32px; padding-top: 6px;
+             text-align: center; font-size: 8.5pt; color: #64748b; }}
+</style>
+</head>
+<body>
+<div class="header">
+  <p class="title">{contract.title}</p>
+  <p class="subtitle">Contract #{contract.contract_number}</p>
+  {version_line}
+</div>
+<table class="meta">
+  <tr>
+    <td class="lbl">Client</td><td>{contract.client.name}</td>
+    <td class="lbl">Status</td><td>{status_map.get(contract.status, contract.status)}</td>
+  </tr>
+  <tr>
+    <td class="lbl">Created</td><td>{contract.created_at.strftime('%B %d, %Y')}</td>
+    <td class="lbl">Created By</td><td>{contract.creator.full_name}</td>
+  </tr>
+  {start_end}
+  {value_row}
+</table>
+<div class="content">
+{html_body}
+</div>
+<div class="footer">Generated {gen_time}{finalized_line}</div>
+</body>
+</html>"""
+
+    buf = BytesIO()
+    if XHTML2PDF_AVAILABLE:
+        pisa.CreatePDF(html, dest=buf)
+    else:
+        # Fallback: plain-text PDF via ReportLab (formatting lost)
+        import html as html_lib
+        plain = re.sub(r'<[^>]+>', ' ', html_body)
+        plain = html_lib.unescape(plain)
+        buf = BytesIO()
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.units import inch
+        fb_doc = SimpleDocTemplate(buf, pagesize=letter,
+                                   rightMargin=inch, leftMargin=inch,
+                                   topMargin=inch, bottomMargin=inch)
+        st = getSampleStyleSheet()
+        story = [Paragraph(contract.title, st['Title'])]
+        for para in plain.split('\n\n'):
+            para = para.strip()
+            if para:
+                story.append(Paragraph(para.replace('\n', ' '), st['Normal']))
+                story.append(Spacer(1, 8))
+        fb_doc.build(story)
+
+    buf.seek(0)
+    return buf
 
 
 # ─── Auth Routes ──────────────────────────────────────────────────────────────
@@ -447,16 +604,25 @@ def templates_list():
 @login_required
 def templates_new():
     if request.method == 'POST':
-        content = request.form.get('content', '').strip()
+        content = None
 
-        # Handle file upload
+        # File upload takes priority
         if 'file' in request.files and request.files['file'].filename:
             file = request.files['file']
             if allowed_file(file.filename):
                 filename = secure_filename(file.filename)
-                file_path = os.path.join(app.config['UPLOAD_FOLDER'], f'tpl_{datetime.utcnow().strftime("%Y%m%d%H%M%S")}_{filename}')
+                file_path = os.path.join(app.config['UPLOAD_FOLDER'],
+                                         f'tpl_{datetime.utcnow().strftime("%Y%m%d%H%M%S")}_{filename}')
                 file.save(file_path)
                 content = extract_text_from_file(file_path, filename)
+            else:
+                flash('Unsupported file type. Please upload a .docx or .txt file.', 'error')
+                return render_template('templates/new.html', template=None)
+
+        if not content:
+            # Raw-HTML editor (used when editing an HTML template)
+            raw = request.form.get('content_raw', '').strip()
+            content = raw or request.form.get('content', '').strip()
 
         if not content:
             flash('Template content is required. Enter text or upload a file.', 'error')
@@ -501,15 +667,27 @@ def templates_edit(template_id):
     if template.created_by != current_user.id:
         abort(403)
     if request.method == 'POST':
-        content = request.form.get('content', '').strip()
+        content = None
 
         if 'file' in request.files and request.files['file'].filename:
             file = request.files['file']
             if allowed_file(file.filename):
                 filename = secure_filename(file.filename)
-                file_path = os.path.join(app.config['UPLOAD_FOLDER'], f'tpl_{datetime.utcnow().strftime("%Y%m%d%H%M%S")}_{filename}')
+                file_path = os.path.join(app.config['UPLOAD_FOLDER'],
+                                         f'tpl_{datetime.utcnow().strftime("%Y%m%d%H%M%S")}_{filename}')
                 file.save(file_path)
                 content = extract_text_from_file(file_path, filename)
+            else:
+                flash('Unsupported file type. Please upload a .docx or .txt file.', 'error')
+                return render_template('templates/new.html', template=template)
+
+        if not content:
+            raw = request.form.get('content_raw', '').strip()
+            content = raw or request.form.get('content', '').strip()
+
+        if not content:
+            flash('Template content is required.', 'error')
+            return render_template('templates/new.html', template=template)
 
         template.name = request.form.get('name', '').strip()
         template.description = request.form.get('description', '').strip()

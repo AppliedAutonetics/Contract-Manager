@@ -40,23 +40,52 @@
         </div>
 
         <div class="form-group">
-          <label class="form-label">Upload File <span class="text-muted">(optional)</span></label>
+          <label class="form-label">Upload Word Document <span class="text-muted">(recommended)</span></label>
           <div class="file-upload-area" id="upload-area">
-            <input type="file" name="file" accept=".txt,.docx,.doc">
+            <input type="file" name="file" id="file-input" accept=".txt,.docx,.doc">
             <div class="upload-icon">📂</div>
-            <div class="upload-text">Click to browse or drag a file here</div>
-            <div class="upload-subtext">Supports .txt, .docx — max 16MB</div>
+            <div class="upload-text">Click to browse or drag a .docx file here</div>
+            <div class="upload-subtext">Supports .docx, .doc, .txt — formatting is preserved from Word documents — max 16MB</div>
           </div>
-          <div class="form-hint">Uploading a file will replace the text content below.</div>
+          <div class="form-hint">
+            Uploading a Word document preserves all formatting (bold, headings, tables, lists).
+            Add <strong>&#123;&#123;FIELD_NAME&#125;&#125;</strong> placeholders inside your Word doc for dynamic fields.
+          </div>
         </div>
 
+        {% set content_is_html = template and template.content and template.content.strip().startswith('<') %}
+
+        {% if content_is_html %}
+        <!-- HTML content from a Word document upload -->
+        <div class="form-group">
+          <label class="form-label">Template Preview <span class="badge badge-approved" style="font-size:11px;margin-left:6px">Word Document</span></label>
+          <div class="docx-preview contract-text" style="border:1px solid var(--gray-200);border-radius:var(--radius);padding:20px;background:#fff;max-height:500px;overflow-y:auto">
+            {{ template.content | render_content }}
+          </div>
+          <!-- Hidden textarea carries the HTML value on form submit -->
+          <textarea name="content" id="template-content" style="display:none">{{ template.content }}</textarea>
+          <div style="margin-top:8px;display:flex;align-items:center;gap:12px">
+            <button type="button" class="btn btn-ghost btn-sm" id="toggle-raw-btn" onclick="toggleRawHtml()">View / Edit Raw HTML</button>
+            <span class="text-xs text-muted">Upload a new file above to replace the document.</span>
+          </div>
+          <div id="raw-html-editor" style="display:none;margin-top:10px">
+            <textarea name="content_raw" id="raw-html-textarea" class="form-control" rows="16"
+              style="font-family:monospace;font-size:12px">{{ template.content }}</textarea>
+            <div class="form-hint">Editing raw HTML. Save changes with the button below — the preview above will update after saving.</div>
+          </div>
+        </div>
+        {% else %}
+        <!-- Plain-text content -->
         <div class="form-group">
           <label class="form-label">Template Content <span class="required">*</span></label>
           <div class="form-hint" style="margin-bottom:8px">
-            Use <strong>{{FIELD_NAME}}</strong> (uppercase) to mark fillable fields. Example: <code>{{CLIENT_NAME}}</code>, <code>{{START_DATE}}</code>, <code>{{CONTRACT_VALUE}}</code>
+            Use <strong>&#123;&#123;FIELD_NAME&#125;&#125;</strong> (uppercase) to mark fillable fields.
+            Example: <code>&#123;&#123;CLIENT_NAME&#125;&#125;</code>, <code>&#123;&#123;START_DATE&#125;&#125;</code>, <code>&#123;&#123;CONTRACT_VALUE&#125;&#125;</code>
           </div>
-          <textarea name="content" id="template-content" class="form-control" rows="20" placeholder="Paste or type your contract template here…&#10;&#10;Use {{FIELD_NAME}} for fields that change per contract.&#10;&#10;Example:&#10;This Agreement is entered into as of {{START_DATE}} between {{COMPANY_NAME}} and {{CLIENT_NAME}}...">{{ template.content if template else '' }}</textarea>
+          <textarea name="content" id="template-content" class="form-control" rows="20"
+            placeholder="Paste or type your contract template here…&#10;&#10;Use {{FIELD_NAME}} for fields that change per contract.&#10;&#10;Example:&#10;This Agreement is entered into as of {{START_DATE}} between {{COMPANY_NAME}} and {{CLIENT_NAME}}...">{{ template.content if template else '' }}</textarea>
         </div>
+        {% endif %}
 
         <!-- Live field detection -->
         <div class="card" style="background:var(--gray-50);border-color:var(--gray-200)">
@@ -69,11 +98,11 @@
               {% if template and template.fields %}
               <div class="fields-list">
                 {% for f in template.fields %}
-                <span class="field-tag">{{'{{'}}{{ f }}{{'}}'}}</span>
+                <span class="field-tag">&#123;&#123;{{ f }}&#125;&#125;</span>
                 {% endfor %}
               </div>
               {% else %}
-              <span class="text-muted text-sm">No fields detected. Use {{FIELD_NAME}} syntax (uppercase).</span>
+              <span class="text-muted text-sm">No fields detected. Use &#123;&#123;FIELD_NAME&#125;&#125; syntax (uppercase).</span>
               {% endif %}
             </div>
           </div>
@@ -95,4 +124,32 @@
     </div>
   </div>
 </div>
+
+<script>
+function toggleRawHtml() {
+  const editor = document.getElementById('raw-html-editor');
+  const rawTA  = document.getElementById('raw-html-textarea');
+  const hiddenTA = document.getElementById('template-content');
+  const btn = document.getElementById('toggle-raw-btn');
+  if (editor.style.display === 'none') {
+    editor.style.display = 'block';
+    btn.textContent = 'Hide Raw HTML';
+  } else {
+    // Sync raw edits back to the hidden textarea before hiding
+    hiddenTA.value = rawTA.value;
+    editor.style.display = 'none';
+    btn.textContent = 'View / Edit Raw HTML';
+  }
+}
+
+// When form submits, copy raw HTML edits into the hidden textarea if the
+// raw editor is open, so the right value reaches the server.
+document.querySelector('form').addEventListener('submit', function() {
+  const rawTA   = document.getElementById('raw-html-textarea');
+  const hiddenTA = document.getElementById('template-content');
+  if (rawTA && hiddenTA && document.getElementById('raw-html-editor').style.display !== 'none') {
+    hiddenTA.value = rawTA.value;
+  }
+});
+</script>
 {% endblock %}
