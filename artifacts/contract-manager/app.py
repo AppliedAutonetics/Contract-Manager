@@ -352,8 +352,23 @@ def _docx_to_html(file_path):
     }
 
     def _run_html(run):
-        text = _hl.escape(run.text or '')
-        if not text:
+        _WNS_MAIN = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+
+        # Detect an inline line-break (<w:br/>) in this run.
+        # python-docx surfaces it as '\n' in run.text, but that is not visible
+        # in HTML — we need an explicit <br> tag.
+        br_el = run._element.find(f'{{{_WNS_MAIN}}}br')
+        has_line_br = (
+            br_el is not None and
+            br_el.get(f'{{{_WNS_MAIN}}}type', '') not in ('page', 'column')
+        )
+
+        # Strip the synthetic '\n' python-docx injects for <w:br/> so the
+        # real text content (if any) is formatted separately from the break.
+        raw = (run.text or '').replace('\n', '') if has_line_br else (run.text or '')
+        text = _hl.escape(raw)
+
+        if not text and not has_line_br:
             return ''
 
         span_styles = []
@@ -384,22 +399,27 @@ def _docx_to_html(file_path):
         except Exception:
             pass
 
-        # Semantic inline tags
-        if run.bold:      text = f'<strong>{text}</strong>'
-        if run.italic:    text = f'<em>{text}</em>'
-        if run.underline: text = f'<u>{text}</u>'
-        try:
-            if run.font.strike: text = f'<s>{text}</s>'
-        except Exception:
-            pass
-        try:
-            if run.font.superscript: text = f'<sup>{text}</sup>'
-            elif run.font.subscript: text = f'<sub>{text}</sub>'
-        except Exception:
-            pass
+        # Semantic inline tags (only when there is real text to wrap)
+        if text:
+            if run.bold:      text = f'<strong>{text}</strong>'
+            if run.italic:    text = f'<em>{text}</em>'
+            if run.underline: text = f'<u>{text}</u>'
+            try:
+                if run.font.strike: text = f'<s>{text}</s>'
+            except Exception:
+                pass
+            try:
+                if run.font.superscript: text = f'<sup>{text}</sup>'
+                elif run.font.subscript: text = f'<sub>{text}</sub>'
+            except Exception:
+                pass
 
-        if span_styles:
-            text = f'<span style="{";".join(span_styles)}">{text}</span>'
+            if span_styles:
+                text = f'<span style="{";".join(span_styles)}">{text}</span>'
+
+        # Append a <br> for the inline line break (after any formatted text)
+        if has_line_br:
+            text = text + '<br>'
 
         return text
 
@@ -505,15 +525,32 @@ def _docx_to_html(file_path):
                 if cid in seen_ids:
                     continue        # skip merged duplicates
                 seen_ids.add(cid)
-                # Collect non-empty paragraph HTML; skip trailing blank paras
-                cell_parts = []
+                # Collect paragraph HTML for this cell.
+                # We keep interior empty paragraphs as <br> spacers (important
+                # for signature blocks: "Name:", "Title:", "Date:" lines are
+                # separated by blank paragraphs for vertical breathing room).
+                # The very last paragraph in every Word cell is an implicit
+                # end-of-cell marker — we strip trailing empties so we don't
+                # add a spurious blank line at the bottom of each cell.
+                cell_slots = []
                 for p in cell.paragraphs:
                     inner = ''.join(_run_html(r) for r in p.runs)
+                    tag, sattr, _ = _para_styles(p)
                     if inner.strip():
-                        tag, sattr, _ = _para_styles(p)
-                        cell_parts.append(f'<{tag}{sattr}>{inner}</{tag}>')
-                if not cell_parts:
-                    cell_parts = ['<p>&nbsp;</p>']
+                        cell_slots.append(f'<{tag}{sattr}>{inner}</{tag}>')
+                    else:
+                        cell_slots.append(None)  # placeholder for empty para
+
+                # Strip trailing empty-para placeholders (end-of-cell markers)
+                while cell_slots and cell_slots[-1] is None:
+                    cell_slots.pop()
+
+                # Replace interior None placeholders with visible spacers
+                cell_parts = [
+                    '<p><br></p>' if slot is None else slot
+                    for slot in cell_slots
+                ] or ['<p>&nbsp;</p>']
+
                 cells_html.append(f'<{ctag}>{"".join(cell_parts)}</{ctag}>')
             rows.append(f'<tr>{"".join(cells_html)}</tr>')
         return f'<table>{"".join(rows)}</table>'
@@ -1123,6 +1160,23 @@ def _add_block_element(doc, element, left_indent=None):
                 cell.text = ''
                 is_header = cell_el.name == 'th'
 
+                # Apply header-cell background fill (matches PDF CSS:
+                # th { background: #f1f5f9 })
+                if is_header:
+                    try:
+                        from docx.oxml.ns import qn as _qn2
+                        from docx.oxml import OxmlElement as _OE2
+                        _tcPr = cell._tc.get_or_add_tcPr()
+                        _shd  = _tcPr.find(_qn2('w:shd'))
+                        if _shd is None:
+                            _shd = _OE2('w:shd')
+                            _tcPr.insert(0, _shd)
+                        _shd.set(_qn2('w:val'),   'clear')
+                        _shd.set(_qn2('w:color'), 'auto')
+                        _shd.set(_qn2('w:fill'),  'F1F5F9')
+                    except Exception:
+                        pass
+
                 # Get direct <p>/<hN> block children (each becomes its own paragraph)
                 block_children = [c for c in cell_el.children
                                   if isinstance(c, Tag) and c.name in
@@ -1244,10 +1298,22 @@ def generate_docx(contract, revision=None):
         if is_html_content(content):
             _html_to_docx_body(doc, content)
         else:
+            # Plain-text content — mirror the PDF path: detect ALL-CAPS lines
+            # as section headings so the Word output matches the PDF structure.
             for para_text in content.split('\n\n'):
                 para_text = para_text.strip()
-                if para_text:
-                    doc.add_paragraph(para_text)
+                if not para_text:
+                    continue
+                lines = para_text.split('\n')
+                first_line = lines[0].strip()
+                if first_line.isupper() and 3 < len(first_line) < 80:
+                    doc.add_heading(first_line, level=2)
+                    if len(lines) > 1:
+                        rest = ' '.join(lines[1:]).strip()
+                        if rest:
+                            doc.add_paragraph(rest)
+                else:
+                    doc.add_paragraph(para_text.replace('\n', ' '))
 
     buf = BytesIO()
     doc.save(buf)
