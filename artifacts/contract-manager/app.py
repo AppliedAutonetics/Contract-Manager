@@ -1483,6 +1483,13 @@ def templates_update_fields(template_id):
     content = request.form.get('content', '').strip()
     if not content:
         return jsonify({'ok': False, 'error': 'Content cannot be empty'}), 400
+    # Normalise content before saving so +FIELD+ notation and split markers are
+    # always converted to canonical {{FIELD}} form.  This ensures the stored
+    # content is consistent with what the browser expects to display.
+    if is_html_content(content):
+        content = fix_split_placeholders(content)   # handles +FIELD+ and split {{…}}
+    else:
+        content = _normalize_plus_placeholders(content)
     template.content = content
     template.fields = extract_template_fields(content)
     template.updated_at = datetime.utcnow()

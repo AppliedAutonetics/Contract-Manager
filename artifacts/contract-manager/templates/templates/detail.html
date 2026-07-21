@@ -270,7 +270,9 @@ function cancelEdit() {
   _exitEditMode();
 }
 
-// Walk text nodes and wrap {{FIELD_NAME}} occurrences in .field-chip spans.
+// Walk text nodes and wrap {{FIELD_NAME}} (and +FIELD_NAME+) occurrences in
+// .field-chip spans.  +FIELD+ chips are normalised to {{FIELD}} so that the
+// content is always in canonical form when it leaves the editor.
 function _convertTextToChips(root) {
   // Collect text nodes first to avoid modifying the tree while iterating.
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
@@ -279,7 +281,9 @@ function _convertTextToChips(root) {
       if (node.parentElement && node.parentElement.classList.contains('field-chip')) {
         return NodeFilter.FILTER_REJECT;
       }
-      return /\{\{[A-Z_][A-Z0-9_]*\}\}/.test(node.nodeValue)
+      // Accept if the node contains either {{FIELD}} or +FIELD+ notation
+      return (/\{\{[A-Z_][A-Z0-9_]*\}\}/.test(node.nodeValue) ||
+              /\+[A-Z_][A-Z0-9_]*\+/.test(node.nodeValue))
         ? NodeFilter.FILTER_ACCEPT
         : NodeFilter.FILTER_SKIP;
     }
@@ -289,14 +293,17 @@ function _convertTextToChips(root) {
   while ((n = walker.nextNode())) textNodes.push(n);
 
   textNodes.forEach(node => {
-    const pattern = /\{\{([A-Z_][A-Z0-9_]*)\}\}/g;
+    // Match both {{FIELD}} and +FIELD+ — always emit chip as {{FIELD}} so the
+    // editor always works with canonical notation.
+    const pattern = /\{\{([A-Z_][A-Z0-9_]*)\}\}|\+([A-Z_][A-Z0-9_]*)\+/g;
     const frag = document.createDocumentFragment();
     let text = node.nodeValue, last = 0, m;
     while ((m = pattern.exec(text)) !== null) {
       if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
       const chip = document.createElement('span');
       chip.className   = 'field-chip';
-      chip.textContent = m[0];
+      // Normalise to {{FIELD}} — m[1] is from {{...}}, m[2] is from +...+
+      chip.textContent = '{{' + (m[1] || m[2]).toUpperCase() + '}}';
       frag.appendChild(chip);
       last = pattern.lastIndex;
     }
@@ -434,11 +441,17 @@ async function saveFields() {
     const data = await res.json();
 
     if (data.ok) {
-      // Show the newly saved content (chips stripped → plain {{FIELD}} text),
-      // then re-apply chip wrapping so fields remain highlighted.
+      // Show the newly saved content (chips stripped → plain text).
+      // _convertTextToChips inside _exitEditMode will re-wrap {{FIELD}} tokens.
       preview.innerHTML = clone.innerHTML;
 
-      // Refresh the sidebar badge from the server response
+      // Exit edit mode first — this calls _convertTextToChips + updateFieldBadge
+      // which re-scans the preview.  We then override the sidebar with the
+      // server's authoritative field list so stale-notation edge cases don't
+      // leave the sidebar stuck on "No fillable fields".
+      _exitEditMode();
+
+      // Override sidebar/badge with server response (authoritative source of truth).
       const sidebar = document.getElementById('fields-list-sidebar');
       document.getElementById('field-count-badge').textContent = data.fields.length;
       if (data.fields.length) {
@@ -446,10 +459,10 @@ async function saveFields() {
           data.fields.map(f => `<span class="field-tag">&#123;&#123;${f}&#125;&#125;</span>`).join('') +
           '</div><p class="text-xs text-muted mt-4">These fields will be filled in when creating a contract.</p>';
       } else {
-        sidebar.innerHTML = '<div class="text-sm text-muted">No fillable fields detected. Make sure placeholders are ' +
-          'typed as <code>{{FIELD_NAME}}</code> (uppercase, no spaces) and click ✏️ Edit Fields to add them.</div>';
+        sidebar.innerHTML = '<div class="text-sm text-muted">No fillable fields detected. ' +
+          'Make sure placeholders use <code>{{FIELD_NAME}}</code> syntax (uppercase, no spaces) ' +
+          'then click ✏️ Edit Fields and Save again.</div>';
       }
-      _exitEditMode();   // stays on saved content; chips highlighted in read mode
       // Flash success inline
       const bar = document.createElement('div');
       bar.style = 'position:fixed;top:16px;right:16px;background:#16a34a;color:#fff;padding:10px 18px;border-radius:8px;font-size:14px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.15)';
