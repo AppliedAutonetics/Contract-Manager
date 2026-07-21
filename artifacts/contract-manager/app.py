@@ -1052,19 +1052,33 @@ def generate_docx(contract, revision=None):
 
     def _strip_p_in_cells(src):
         def _flatten(m):
-            ctag  = m.group(1)               # "td" or "th"
-            attrs = m.group(2) or ''         # any attributes, e.g. style="…"
+            ctag  = m.group(1)       # "td" or "th"
+            attrs = m.group(2) or '' # optional attributes, e.g. style="…"
             inner = m.group(3)
-            inner = _re.sub(
+            # Extract the content of each block element in order.
+            parts = _re.findall(
                 r'<(?:p|h[1-6])[^>]*>(.*?)</(?:p|h[1-6])>',
-                lambda mm: mm.group(1) + '<br>',
-                inner,
-                flags=_re.DOTALL,
+                inner, flags=_re.DOTALL,
             )
-            inner = inner.rstrip('<br />')
-            inner = inner.strip()
+            if parts:
+                # Normalise each part: blank/just-<br> paragraphs → empty string.
+                lines = []
+                for p in parts:
+                    s = p.strip()
+                    if s in ('', '<br>', '<br/>', '<br />'):
+                        lines.append('')      # blank separator line
+                    else:
+                        lines.append(s)
+                # Drop trailing blank lines (end-of-cell Word artefact).
+                while lines and not lines[-1]:
+                    lines.pop()
+                # Join with <br>; adjacent empty strings produce double-<br>
+                # (one blank line), which html2docx renders as two line-breaks.
+                inner = '<br>'.join(lines)
+            else:
+                inner = inner.strip()
             return '<' + ctag + attrs + '>' + inner + '</' + ctag + '>'
-        # group 1=tag, group 2=optional attrs (with leading space), group 3=content
+        # group 1=tag, group 2=optional attrs (leading space), group 3=content
         return _re.sub(r'<(td|th)(\s[^>]*)?>(.+?)</\1>', _flatten, src, flags=_re.DOTALL)
 
     body_html = _strip_p_in_cells(body_html)
@@ -1084,6 +1098,32 @@ def generate_docx(contract, revision=None):
             section.right_margin  = Inches(1)
             section.top_margin    = Inches(1)
             section.bottom_margin = Inches(1)
+
+        # html2docx computes column widths using its Document's default margins
+        # (1.25" each side → 6.0" text).  After we switch to 1" margins the text
+        # area grows to 6.5", so every table ends up 0.5" too narrow.  Walk all
+        # tables and recompute widths against the actual post-margin text width.
+        sec = doc.sections[0]
+        text_w_twips = (sec.page_width - sec.left_margin - sec.right_margin) // 635
+        for table in doc.tables:
+            tbl = table._tbl
+            # Set the overall table width element to the full text width.
+            tblPr = tbl.find(qn('w:tblPr'))
+            if tblPr is None:
+                tblPr = OxmlElement('w:tblPr')
+                tbl.insert(0, tblPr)
+            tblW = tblPr.find(qn('w:tblW'))
+            if tblW is None:
+                tblW = OxmlElement('w:tblW')
+                tblPr.append(tblW)
+            tblW.set(qn('w:type'), 'dxa')
+            tblW.set(qn('w:val'),  str(int(text_w_twips)))
+            # Distribute columns evenly across the full width.
+            ncols = len(table.columns)
+            if ncols:
+                col_w = int(text_w_twips) // ncols
+                for col in table.columns:
+                    col.width = col_w
 
         _apply_docx_styles(doc)
 
