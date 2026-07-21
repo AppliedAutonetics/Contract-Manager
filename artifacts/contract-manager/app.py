@@ -964,6 +964,16 @@ def _add_inline_to_para(para, node, bold=False, italic=False,
                     _font_size = round(float(fs[:-2]) * 0.75, 1)
             except ValueError:
                 pass
+        if 'font-weight' in props:
+            fw = props['font-weight'].strip().lower()
+            if fw in ('bold', '700', '800', '900'):
+                _bold = True
+        if 'font-style' in props:
+            if props['font-style'].strip().lower() == 'italic':
+                _italic = True
+        if 'text-decoration' in props:
+            if 'underline' in props['text-decoration'].lower():
+                _underline = True
 
     for child in node.children:
         _add_inline_to_para(para, child, _bold, _italic, _underline, _strike,
@@ -1007,6 +1017,15 @@ def _add_block_element(doc, element, left_indent=None):
         classes = classes.split()
 
     # ── Headings ────────────────────────────────────────────────────────────
+    # PDF CSS: h1-h6 { margin: 1.2em 0 0.4em }
+    _HEADING_SPACING = {
+        1: (Pt(17), Pt(6)),   # 1.2em × 14pt ≈ 17pt before, 0.4em × 14pt ≈ 6pt after
+        2: (Pt(14), Pt(5)),
+        3: (Pt(13), Pt(4)),
+        4: (Pt(12), Pt(4)),
+        5: (Pt(12), Pt(4)),
+        6: (Pt(12), Pt(4)),
+    }
     if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
         level = int(tag[1])
         para = doc.add_heading('', level=level)
@@ -1017,6 +1036,9 @@ def _add_block_element(doc, element, left_indent=None):
             para.alignment = align
         if left_indent is not None:
             para.paragraph_format.left_indent = left_indent
+        sb, sa = _HEADING_SPACING.get(level, (Pt(12), Pt(4)))
+        para.paragraph_format.space_before = sb
+        para.paragraph_format.space_after  = sa
 
     # ── Paragraph ───────────────────────────────────────────────────────────
     elif tag == 'p':
@@ -1030,6 +1052,19 @@ def _add_block_element(doc, element, left_indent=None):
             para.paragraph_format.left_indent = Inches(0.5)
         elif left_indent is not None:
             para.paragraph_format.left_indent = left_indent
+        # Apply inline margin overrides if present
+        el_css = _parse_css_props(element.get('style', ''))
+        for css_prop, docx_attr in (('margin-top', 'space_before'),
+                                     ('margin-bottom', 'space_after')):
+            if css_prop in el_css:
+                raw = el_css[css_prop].strip()
+                try:
+                    if raw.endswith('pt'):
+                        setattr(para.paragraph_format, docx_attr, Pt(float(raw[:-2])))
+                    elif raw.endswith('px'):
+                        setattr(para.paragraph_format, docx_attr, Pt(round(float(raw[:-2]) * 0.75, 1)))
+                except (ValueError, AttributeError):
+                    pass
 
     # ── Lists ────────────────────────────────────────────────────────────────
     elif tag in ('ul', 'ol'):
@@ -1051,6 +1086,35 @@ def _add_block_element(doc, element, left_indent=None):
             return
         tbl = doc.add_table(rows=len(rows_html), cols=max_cols)
         tbl.style = 'Table Grid'
+        # Set table to 100 % page width (6.5 in between 1-inch margins = 9360 twips)
+        try:
+            from docx.oxml.ns import qn as _qn
+            from docx.oxml import OxmlElement as _OE
+            _PAGE_W_TWIPS = 9360
+            _col_w_twips  = _PAGE_W_TWIPS // max_cols
+            tblPr = tbl._element.find(_qn('w:tblPr'))
+            if tblPr is None:
+                tblPr = _OE('w:tblPr')
+                tbl._element.insert(0, tblPr)
+            tblW = tblPr.find(_qn('w:tblW'))
+            if tblW is None:
+                tblW = _OE('w:tblW')
+                tblPr.append(tblW)
+            tblW.set(_qn('w:w'), str(_PAGE_W_TWIPS))
+            tblW.set(_qn('w:type'), 'dxa')
+            # Set equal column widths via cell tcW elements
+            for row in tbl.rows:
+                for cell in row.cells:
+                    tcPr = cell._tc.get_or_add_tcPr()
+                    existing_tcW = tcPr.find(_qn('w:tcW'))
+                    if existing_tcW is not None:
+                        tcPr.remove(existing_tcW)
+                    tcW = _OE('w:tcW')
+                    tcW.set(_qn('w:w'), str(_col_w_twips))
+                    tcW.set(_qn('w:type'), 'dxa')
+                    tcPr.insert(0, tcW)
+        except Exception:
+            pass
         for ri, row_el in enumerate(rows_html):
             for ci, cell_el in enumerate(row_el.find_all(['td', 'th'])):
                 if ci >= max_cols:
@@ -1135,6 +1199,9 @@ def generate_docx(contract, revision=None):
         normal.font.name      = 'Arial'
         normal.font.size      = Pt(10)
         normal.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
+        # PDF CSS: p { margin: 0.55em 0 } ≈ 5.5 pt at 10 pt font
+        normal.paragraph_format.space_before = Pt(0)
+        normal.paragraph_format.space_after  = Pt(6)
     except Exception:
         pass
 

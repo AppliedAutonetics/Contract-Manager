@@ -56,22 +56,31 @@
         {% set content_is_html = template and template.content and template.content.strip().startswith('<') %}
 
         {% if content_is_html %}
-        <!-- HTML content from a Word document upload -->
+        <!-- HTML content from a Word document upload — fully editable WYSIWYG -->
         <div class="form-group">
-          <label class="form-label">Template Preview <span class="badge badge-approved" style="font-size:11px;margin-left:6px">Word Document</span></label>
-          <div class="docx-preview contract-text" style="border:1px solid var(--gray-200);border-radius:var(--radius);padding:20px;background:#fff;max-height:500px;overflow-y:auto">
-            {{ template.content | render_content }}
+          <label class="form-label">
+            Template Content
+            <span class="badge badge-approved" style="font-size:11px;margin-left:6px">Word Document</span>
+          </label>
+          <div class="form-hint" style="margin-bottom:8px">
+            Click directly in the document below to edit text and formatting.
+            Use <strong>&#123;&#123;FIELD_NAME&#125;&#125;</strong> (uppercase) anywhere in the text to mark a fillable field.
+            Upload a new file above to fully replace the document.
           </div>
-          <!-- Hidden textarea carries the HTML value on form submit -->
+          <!-- Contenteditable WYSIWYG editor -->
+          <div id="content-editor"
+               class="docx-preview contract-text"
+               contenteditable="true"
+               style="border:2px solid var(--primary);border-radius:var(--radius);padding:20px;background:#fff;min-height:300px;max-height:600px;overflow-y:auto;outline:none;cursor:text">{{ template.content | render_content }}</div>
+          <!-- Hidden textarea carries the serialised HTML on form submit -->
           <textarea name="content" id="template-content" style="display:none">{{ template.content }}</textarea>
           <div style="margin-top:8px;display:flex;align-items:center;gap:12px">
-            <button type="button" class="btn btn-ghost btn-sm" id="toggle-raw-btn" onclick="toggleRawHtml()">View / Edit Raw HTML</button>
-            <span class="text-xs text-muted">Upload a new file above to replace the document.</span>
+            <button type="button" class="btn btn-ghost btn-sm" id="toggle-raw-btn" onclick="toggleRawHtml()">⟨/⟩ View / Edit Raw HTML</button>
           </div>
           <div id="raw-html-editor" style="display:none;margin-top:10px">
             <textarea name="content_raw" id="raw-html-textarea" class="form-control" rows="16"
               style="font-family:monospace;font-size:12px">{{ template.content }}</textarea>
-            <div class="form-hint">Editing raw HTML. Save changes with the button below — the preview above will update after saving.</div>
+            <div class="form-hint">Editing raw HTML. Click "Hide Raw HTML" to return to the visual editor — your changes are synced automatically.</div>
           </div>
         </div>
         {% else %}
@@ -127,28 +136,43 @@
 
 <script>
 function toggleRawHtml() {
-  const editor = document.getElementById('raw-html-editor');
-  const rawTA  = document.getElementById('raw-html-textarea');
+  const editor   = document.getElementById('raw-html-editor');
+  const rawTA    = document.getElementById('raw-html-textarea');
   const hiddenTA = document.getElementById('template-content');
-  const btn = document.getElementById('toggle-raw-btn');
+  const wysiwyg  = document.getElementById('content-editor');
+  const btn      = document.getElementById('toggle-raw-btn');
+  if (!editor) return;
+
   if (editor.style.display === 'none') {
+    // Opening raw editor — sync from WYSIWYG first
+    if (wysiwyg && rawTA) rawTA.value = wysiwyg.innerHTML;
     editor.style.display = 'block';
-    btn.textContent = 'Hide Raw HTML';
+    btn.textContent = '⟨/⟩ Hide Raw HTML';
   } else {
-    // Sync raw edits back to the hidden textarea before hiding
-    hiddenTA.value = rawTA.value;
+    // Closing raw editor — sync raw edits back into WYSIWYG and hidden field
+    if (rawTA && hiddenTA) hiddenTA.value = rawTA.value;
+    if (rawTA && wysiwyg)  wysiwyg.innerHTML = rawTA.value;
     editor.style.display = 'none';
-    btn.textContent = 'View / Edit Raw HTML';
+    btn.textContent = '⟨/⟩ View / Edit Raw HTML';
   }
 }
 
-// When form submits, copy raw HTML edits into the hidden textarea if the
-// raw editor is open, so the right value reaches the server.
+// On submit: capture whichever editor surface is active and put it into the
+// hidden textarea so the right value always reaches the server.
 document.querySelector('form').addEventListener('submit', function() {
-  const rawTA   = document.getElementById('raw-html-textarea');
   const hiddenTA = document.getElementById('template-content');
-  if (rawTA && hiddenTA && document.getElementById('raw-html-editor').style.display !== 'none') {
+  if (!hiddenTA) return;
+
+  const rawEditor = document.getElementById('raw-html-editor');
+  const rawTA     = document.getElementById('raw-html-textarea');
+  const wysiwyg   = document.getElementById('content-editor');
+
+  if (rawEditor && rawTA && rawEditor.style.display !== 'none') {
+    // Raw HTML editor is open — use its value directly
     hiddenTA.value = rawTA.value;
+  } else if (wysiwyg) {
+    // WYSIWYG contenteditable is the active surface
+    hiddenTA.value = wysiwyg.innerHTML;
   }
 });
 </script>
