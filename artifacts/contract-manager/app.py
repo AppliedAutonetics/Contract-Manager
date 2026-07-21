@@ -1043,8 +1043,32 @@ def generate_docx(contract, revision=None):
                 parts.append(f'<p>{_hl.escape(blk.replace(chr(10), " "))}</p>')
         body_html = '\n'.join(parts)
 
+    # html2docx resets its table context on every </p> close tag.  Any <p>
+    # inside a <td>/<th> (which _docx_to_html always produces) therefore kills
+    # the table context for every subsequent cell in the same row — those cells
+    # become orphaned paragraphs in the document body.  Strip the inner <p>/<hN>
+    # wrappers from cell content before handing the HTML to html2docx.
+    import re as _re
+
+    def _strip_p_in_cells(src):
+        def _flatten(m):
+            ctag  = m.group(1)
+            inner = m.group(2)
+            inner = _re.sub(
+                r'<(?:p|h[1-6])[^>]*>(.*?)</(?:p|h[1-6])>',
+                lambda mm: mm.group(1) + '<br>',
+                inner,
+                flags=_re.DOTALL,
+            )
+            inner = inner.rstrip('<br />')
+            inner = inner.strip()
+            return '<' + ctag + '>' + inner + '</' + ctag + '>'
+        return _re.sub(r'<(td|th)>(.*?)</\1>', _flatten, src, flags=_re.DOTALL)
+
+    body_html = _strip_p_in_cells(body_html)
+
     # Wrap in a minimal full-HTML document (html2docx needs <html><body>)
-    full_html = f'<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>{body_html}</body></html>'
+    full_html = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>' + body_html + '</body></html>'
 
     try:
         raw_buf = _h2d(full_html, title=contract.title or 'Contract')
