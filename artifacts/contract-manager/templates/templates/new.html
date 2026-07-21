@@ -83,7 +83,7 @@
             Example: <code>&#123;&#123;CLIENT_NAME&#125;&#125;</code>, <code>&#123;&#123;START_DATE&#125;&#125;</code>, <code>&#123;&#123;CONTRACT_VALUE&#125;&#125;</code>
           </div>
           <textarea name="content" id="template-content" class="form-control" rows="20"
-            placeholder="Paste or type your contract template here…&#10;&#10;Use {{FIELD_NAME}} for fields that change per contract.&#10;&#10;Example:&#10;This Agreement is entered into as of {{START_DATE}} between {{COMPANY_NAME}} and {{CLIENT_NAME}}...">{{ template.content if template else '' }}</textarea>
+            placeholder="Paste or type your contract template here…&#10;&#10;Use &#123;&#123;FIELD_NAME&#125;&#125; for fields that change per contract.&#10;&#10;Example:&#10;This Agreement is entered into as of &#123;&#123;START_DATE&#125;&#125; between &#123;&#123;COMPANY_NAME&#125;&#125; and &#123;&#123;CLIENT_NAME&#125;&#125;...">{{ template.content if template else '' }}</textarea>
         </div>
         {% endif %}
 
