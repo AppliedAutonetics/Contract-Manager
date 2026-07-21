@@ -833,6 +833,7 @@ tr:hover td { background: var(--gray-50); }
 .contract-text.docx-preview {
   white-space: normal;
   font-family: 'Georgia', serif;
+  overflow-x: hidden;  /* prevent wide DOCX content from overflowing the card */
 }
 
 /* ── Headings ── */
@@ -910,7 +911,9 @@ tr:hover td { background: var(--gray-50); }
 /* ── Tables ── */
 .docx-preview table {
   border-collapse: collapse;
-  width: 100%;
+  width: 100% !important;    /* override DOCX inline width (e.g. width:21cm) */
+  max-width: 100% !important;
+  table-layout: fixed;       /* columns share space rather than growing past container */
   margin: 1em 0;
   font-size: 13px;
 }

@@ -319,27 +319,54 @@ function _convertTextToChips(root) {
 function insertFieldChip(name) {
   name = name.trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_');
   if (!name) return;
-  preview.focus();
-  restoreRange();
 
   const chip = document.createElement('span');
   chip.className   = 'field-chip';
   chip.textContent = '{{' + name + '}}';
+
+  // Resolve the target <td>/<th> from savedRange BEFORE touching focus.
+  // _convertTextToChips() may have replaced the original text node with chip
+  // spans, leaving savedRange pointing at a detached node.  The cell element
+  // itself is still alive in the DOM, so grab that reference now.
+  let targetCell = null;
+  if (savedRange) {
+    let node = savedRange.startContainer;
+    while (node && node !== preview) {
+      if (node.nodeName === 'TD' || node.nodeName === 'TH') { targetCell = node; break; }
+      node = node.parentNode;
+    }
+  }
+
+  preview.focus();
+  restoreRange();
 
   const sel = window.getSelection();
   if (sel && sel.rangeCount > 0 && preview.contains(sel.anchorNode)) {
     const range = sel.getRangeAt(0);
     range.deleteContents();
     range.insertNode(chip);
-    // Move cursor after the chip
-    const after = document.createRange();
-    after.setStartAfter(chip);
-    after.collapse(true);
-    sel.removeAllRanges();
-    sel.addRange(after);
+
+    // The browser's table-fixup can eject a <span> that lands at a <tr>/<tbody>
+    // boundary (when savedRange was stale and resolved to the row level).
+    // If the chip ended up outside its intended cell, move it back in.
+    if (targetCell && !targetCell.contains(chip)) {
+      targetCell.appendChild(chip);
+    }
+  } else if (targetCell) {
+    // Cursor was in a cell but selection is gone — append directly to the cell.
+    targetCell.appendChild(chip);
   } else {
     preview.appendChild(chip);
   }
+
+  // Place cursor after the chip
+  const after = document.createRange();
+  after.setStartAfter(chip);
+  after.collapse(true);
+  const postSel = window.getSelection();
+  postSel.removeAllRanges();
+  postSel.addRange(after);
+
   savedRange = null;
   updateFieldBadge();
 }
