@@ -1052,8 +1052,9 @@ def generate_docx(contract, revision=None):
 
     def _strip_p_in_cells(src):
         def _flatten(m):
-            ctag  = m.group(1)
-            inner = m.group(2)
+            ctag  = m.group(1)               # "td" or "th"
+            attrs = m.group(2) or ''         # any attributes, e.g. style="…"
+            inner = m.group(3)
             inner = _re.sub(
                 r'<(?:p|h[1-6])[^>]*>(.*?)</(?:p|h[1-6])>',
                 lambda mm: mm.group(1) + '<br>',
@@ -1062,8 +1063,9 @@ def generate_docx(contract, revision=None):
             )
             inner = inner.rstrip('<br />')
             inner = inner.strip()
-            return '<' + ctag + '>' + inner + '</' + ctag + '>'
-        return _re.sub(r'<(td|th)>(.*?)</\1>', _flatten, src, flags=_re.DOTALL)
+            return '<' + ctag + attrs + '>' + inner + '</' + ctag + '>'
+        # group 1=tag, group 2=optional attrs (with leading space), group 3=content
+        return _re.sub(r'<(td|th)(\s[^>]*)?>(.+?)</\1>', _flatten, src, flags=_re.DOTALL)
 
     body_html = _strip_p_in_cells(body_html)
 
