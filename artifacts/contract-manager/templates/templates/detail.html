@@ -208,6 +208,9 @@
 
 <script>
 const SAVE_URL = "{{ url_for('templates_update_fields', template_id=template.id) }}";
+</script>
+<script>
+{% raw %}
 const CSRF    = document.getElementById('csrf-token').value;
 const preview = document.getElementById('doc-preview');
 
@@ -302,7 +305,7 @@ function _convertTextToChips(root) {
       if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
       const chip = document.createElement('span');
       chip.className   = 'field-chip';
-      // Normalise to {{FIELD}} — m[1] is from {{...}}, m[2] is from +...+
+      // Normalise to curly-brace FIELD form — m[1] is from double-curly, m[2] is from +...+
       chip.textContent = '{{' + (m[1] || m[2]).toUpperCase() + '}}';
       frag.appendChild(chip);
       last = pattern.lastIndex;
@@ -487,5 +490,6 @@ document.addEventListener('DOMContentLoaded', function () {
   _convertTextToChips(preview);
   updateFieldBadge();
 });
+{% endraw %}
 </script>
 {% endblock %}
