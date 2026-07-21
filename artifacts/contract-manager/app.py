@@ -1475,10 +1475,46 @@ def generate_docx(contract, revision=None):
                 else:
                     doc.add_paragraph(para_text.replace('\n', ' '))
 
-    buf = BytesIO()
-    doc.save(buf)
-    buf.seek(0)
-    return buf
+    # ── Save then post-process the ZIP ──────────────────────────────────────
+    # Two files inside every python-docx output prevent our formatting from
+    # taking effect in Word:
+    #
+    # 1. word/theme/theme1.xml  — defines majorHAnsi=Cambria, minorHAnsi=Calibri.
+    #    Word resolves style-level "use theme body font" references through this
+    #    file. Even though our runs have explicit w:ascii="Arial", some Word
+    #    builds on certain platforms resolve the theme first and ignore the
+    #    run-level override.  Fix: replace every <a:latin typeface="…"/> in the
+    #    font scheme with Arial so the theme itself resolves to Arial.
+    #
+    # 2. word/stylesWithEffects.xml — a duplicate of styles.xml that includes
+    #    visual-effect metadata.  Word *may* prefer this file over styles.xml
+    #    when present; it still carries the original minorHAnsi/majorHAnsi
+    #    references because python-docx never writes to it.  Fix: drop the file
+    #    entirely — Word silently falls back to styles.xml.
+    _raw = BytesIO()
+    doc.save(_raw)
+    _raw.seek(0)
+
+    import zipfile as _zf
+    _out = BytesIO()
+    with _zf.ZipFile(_raw, 'r') as _zin, \
+         _zf.ZipFile(_out, 'w', _zf.ZIP_DEFLATED) as _zout:
+        for _item in _zin.infolist():
+            # Drop the stale duplicate styles file
+            if _item.filename == 'word/stylesWithEffects.xml':
+                continue
+            _data = _zin.read(_item.filename)
+            # Patch theme: both font slots → Arial
+            if _item.filename == 'word/theme/theme1.xml':
+                _data = re.sub(
+                    rb'(<a:latin\s[^>]*typeface=")[^"]*(")',
+                    rb'\1Arial\2',
+                    _data,
+                )
+            _zout.writestr(_item, _data)
+
+    _out.seek(0)
+    return _out
 
 
 # ─── Auth Routes ──────────────────────────────────────────────────────────────
