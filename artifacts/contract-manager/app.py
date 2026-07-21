@@ -25,7 +25,7 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 # Word doc handling
 try:
     from docx import Document as DocxDocument
-    from docx.shared import Pt, Inches, RGBColor
+    from docx.shared import Pt, Inches, RGBColor, Twips
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
@@ -551,7 +551,21 @@ def _docx_to_html(file_path):
                     for slot in cell_slots
                 ] or ['<p>&nbsp;</p>']
 
-                cells_html.append(f'<{ctag}>{"".join(cell_parts)}</{ctag}>')
+                # Extract cell background fill (w:shd) so it survives
+                # the HTML intermediate and can be re-applied on DOCX export.
+                cell_style = ''
+                try:
+                    tc_pr = cell._tc.find(f'{{{_WNS}}}tcPr')
+                    if tc_pr is not None:
+                        shd = tc_pr.find(f'{{{_WNS}}}shd')
+                        if shd is not None:
+                            fill_val = shd.get(f'{{{_WNS}}}fill', '')
+                            if fill_val and fill_val.upper() not in ('', 'AUTO', 'FFFFFF', 'NONE'):
+                                cell_style = f' style="background-color:#{fill_val.upper()}"'
+                except Exception:
+                    pass
+
+                cells_html.append(f'<{ctag}{cell_style}>{"".join(cell_parts)}</{ctag}>')
             rows.append(f'<tr>{"".join(cells_html)}</tr>')
         return f'<table>{"".join(rows)}</table>'
 
@@ -1043,48 +1057,71 @@ def generate_docx(contract, revision=None):
                 parts.append(f'<p>{_hl.escape(blk.replace(chr(10), " "))}</p>')
         body_html = '\n'.join(parts)
 
-    # html2docx resets its table context on every </p> close tag.  Any <p>
-    # inside a <td>/<th> (which _docx_to_html always produces) therefore kills
-    # the table context for every subsequent cell in the same row — those cells
-    # become orphaned paragraphs in the document body.  Strip the inner <p>/<hN>
-    # wrappers from cell content before handing the HTML to html2docx.
+    # ── Step 1: snapshot cell fill colours from the HTML BEFORE we mangle it.
+    # _docx_to_html now emits style="background-color:#HEX" on <td>/<th> for
+    # cells that carry a Word shading fill.  html2docx ignores CSS background-
+    # color entirely, so we pull the grid out here and re-apply it via OOXML
+    # after the conversion.  We also note which cells were <th> so we can fall
+    # back to the default header fill colour for th cells without an explicit one.
     import re as _re
 
+    def _extract_fills(html):
+        """Return list-of-tables → rows → (is_th, fill_hex_or_None)."""
+        tables = []
+        for tbl_m in _re.finditer(r'<table[^>]*>(.*?)</table>', html,
+                                   _re.DOTALL | _re.IGNORECASE):
+            rows = []
+            for row_m in _re.finditer(r'<tr[^>]*>(.*?)</tr>',
+                                       tbl_m.group(1),
+                                       _re.DOTALL | _re.IGNORECASE):
+                cells = []
+                for cell_m in _re.finditer(r'<(td|th)([^>]*)>',
+                                            row_m.group(1), _re.IGNORECASE):
+                    is_th = cell_m.group(1).lower() == 'th'
+                    attrs = cell_m.group(2)
+                    bc = _re.search(
+                        r'background-color\s*:\s*#?([0-9a-fA-F]{6})',
+                        attrs, _re.IGNORECASE)
+                    fill = bc.group(1).upper() if bc else None
+                    cells.append((is_th, fill))
+                rows.append(cells)
+            tables.append(rows)
+        return tables
+
+    fills_grid = _extract_fills(body_html)
+
+    # ── Step 2: strip <p>/<hN> wrappers from inside <td>/<th>.
+    # html2docx resets its table context on every </p> close tag — any block
+    # wrapper inside a cell kills the table context for the rest of that row,
+    # making subsequent cells land as orphaned body paragraphs instead.
     def _strip_p_in_cells(src):
         def _flatten(m):
             ctag  = m.group(1)       # "td" or "th"
-            attrs = m.group(2) or '' # optional attributes, e.g. style="…"
+            attrs = m.group(2) or '' # preserved attributes (style="…", etc.)
             inner = m.group(3)
-            # Extract the content of each block element in order.
             parts = _re.findall(
                 r'<(?:p|h[1-6])[^>]*>(.*?)</(?:p|h[1-6])>',
                 inner, flags=_re.DOTALL,
             )
             if parts:
-                # Normalise each part: blank/just-<br> paragraphs → empty string.
                 lines = []
                 for p in parts:
                     s = p.strip()
-                    if s in ('', '<br>', '<br/>', '<br />'):
-                        lines.append('')      # blank separator line
-                    else:
-                        lines.append(s)
-                # Drop trailing blank lines (end-of-cell Word artefact).
+                    lines.append('' if s in ('', '<br>', '<br/>', '<br />') else s)
                 while lines and not lines[-1]:
                     lines.pop()
-                # Join with <br>; adjacent empty strings produce double-<br>
-                # (one blank line), which html2docx renders as two line-breaks.
                 inner = '<br>'.join(lines)
             else:
                 inner = inner.strip()
-            return '<' + ctag + attrs + '>' + inner + '</' + ctag + '>'
-        # group 1=tag, group 2=optional attrs (leading space), group 3=content
-        return _re.sub(r'<(td|th)(\s[^>]*)?>(.+?)</\1>', _flatten, src, flags=_re.DOTALL)
+            return '<' + ctag + attrs + '>' + (inner or '&nbsp;') + '</' + ctag + '>'
+        return _re.sub(r'<(td|th)(\s[^>]*)?>(.+?)</\1>', _flatten, src,
+                       flags=_re.DOTALL)
 
     body_html = _strip_p_in_cells(body_html)
 
     # Wrap in a minimal full-HTML document (html2docx needs <html><body>)
-    full_html = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>' + body_html + '</body></html>'
+    full_html = ('<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>'
+                 + body_html + '</body></html>')
 
     try:
         raw_buf = _h2d(full_html, title=contract.title or 'Contract')
@@ -1092,22 +1129,31 @@ def generate_docx(contract, revision=None):
 
         doc = DocxDocument(raw_buf)
 
-        # 1-inch margins — matches PDF @page { margin: 1in }
+        # ── 1-inch margins (match PDF @page { margin: 1in }) ─────────────────
         for section in doc.sections:
             section.left_margin   = Inches(1)
             section.right_margin  = Inches(1)
             section.top_margin    = Inches(1)
             section.bottom_margin = Inches(1)
 
-        # html2docx computes column widths using its Document's default margins
-        # (1.25" each side → 6.0" text).  After we switch to 1" margins the text
-        # area grows to 6.5", so every table ends up 0.5" too narrow.  Walk all
-        # tables and recompute widths against the actual post-margin text width.
+        # ── Per-table post-processing ─────────────────────────────────────────
+        # html2docx calculates column widths using its default 1.25" margins
+        # (6.0" text).  We've switched to 1" margins (6.5" text), so every
+        # table was 0.5" too narrow.  We must also stamp in fill colours and
+        # borders because html2docx ignores CSS background-color and the border
+        # rules live in a <style> block it never reads.
         sec = doc.sections[0]
-        text_w_twips = (sec.page_width - sec.left_margin - sec.right_margin) // 635
-        for table in doc.tables:
-            tbl = table._tbl
-            # Set the overall table width element to the full text width.
+        text_w_emu   = int(sec.page_width) - int(sec.left_margin) - int(sec.right_margin)
+        text_w_twips = text_w_emu // 635   # 1 twip = 635 EMU
+
+        _TH_FILL      = 'F1F5F9'   # default header fill from PDF CSS (th bg)
+        _BORDER_SIDES = ('top', 'left', 'bottom', 'right', 'insideH', 'insideV')
+
+        for ti, table in enumerate(doc.tables):
+            tbl   = table._tbl
+            ncols = len(table.columns)
+
+            # a) Table-level width ─────────────────────────────────────────────
             tblPr = tbl.find(qn('w:tblPr'))
             if tblPr is None:
                 tblPr = OxmlElement('w:tblPr')
@@ -1117,13 +1163,68 @@ def generate_docx(contract, revision=None):
                 tblW = OxmlElement('w:tblW')
                 tblPr.append(tblW)
             tblW.set(qn('w:type'), 'dxa')
-            tblW.set(qn('w:val'),  str(int(text_w_twips)))
-            # Distribute columns evenly across the full width.
-            ncols = len(table.columns)
+            tblW.set(qn('w:val'),  str(text_w_twips))
+
+            # b) Grid column widths (w:tblGrid > w:gridCol) ───────────────────
             if ncols:
-                col_w = int(text_w_twips) // ncols
+                col_w_twips = text_w_twips // ncols
                 for col in table.columns:
-                    col.width = col_w
+                    col.width = Twips(col_w_twips)
+
+            # c) Per-cell: individual width + fill colour ──────────────────────
+            #    Column.width only touches w:gridCol; each cell's own w:tcW can
+            #    override it, so we update those explicitly too.
+            tbl_fills = fills_grid[ti] if ti < len(fills_grid) else []
+
+            for ri, row in enumerate(table.rows):
+                row_fills = tbl_fills[ri] if ri < len(tbl_fills) else []
+                raw_tcs   = row._tr.findall(qn('w:tc'))
+
+                for ci, tc in enumerate(raw_tcs):
+                    # Cell width
+                    if ncols:
+                        tcPr = tc.find(qn('w:tcPr'))
+                        if tcPr is None:
+                            tcPr = OxmlElement('w:tcPr')
+                            tc.insert(0, tcPr)
+                        tcW = tcPr.find(qn('w:tcW'))
+                        if tcW is None:
+                            tcW = OxmlElement('w:tcW')
+                            tcPr.append(tcW)
+                        tcW.set(qn('w:type'), 'dxa')
+                        tcW.set(qn('w:val'),  str(col_w_twips))
+
+                    # Cell fill
+                    is_th, fill = (row_fills[ci] if ci < len(row_fills)
+                                   else (False, None))
+                    effective_fill = fill or (_TH_FILL if is_th else None)
+                    if effective_fill:
+                        tcPr = tc.find(qn('w:tcPr'))
+                        if tcPr is None:
+                            tcPr = OxmlElement('w:tcPr')
+                            tc.insert(0, tcPr)
+                        shd = tcPr.find(qn('w:shd'))
+                        if shd is None:
+                            shd = OxmlElement('w:shd')
+                            tcPr.append(shd)
+                        shd.set(qn('w:val'),   'clear')
+                        shd.set(qn('w:color'), 'auto')
+                        shd.set(qn('w:fill'),  effective_fill)
+
+            # d) Table borders: 0.5 pt #e2e8f0 grid (matches PDF CSS) ─────────
+            tblBorders = tblPr.find(qn('w:tblBorders'))
+            if tblBorders is None:
+                tblBorders = OxmlElement('w:tblBorders')
+                tblPr.append(tblBorders)
+            for side in _BORDER_SIDES:
+                el = tblBorders.find(qn(f'w:{side}'))
+                if el is None:
+                    el = OxmlElement(f'w:{side}')
+                    tblBorders.append(el)
+                el.set(qn('w:val'),   'single')
+                el.set(qn('w:sz'),    '4')       # 4 × ⅛ pt = 0.5 pt
+                el.set(qn('w:color'), 'e2e8f0')
+                el.set(qn('w:space'), '0')
 
         _apply_docx_styles(doc)
 
