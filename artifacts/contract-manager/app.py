@@ -795,9 +795,14 @@ def generate_pdf(contract, revision=None):
     return buffer
 
 
-def _generate_pdf_html(contract, html_body, revision=None):
-    """Generate a PDF from the contract body only — no administrative metadata."""
-    html = f"""<!DOCTYPE html>
+def _build_contract_html(html_body):
+    """Return a fully-styled HTML document string for the contract body.
+
+    Single source of truth for contract formatting.  Both the PDF exporter
+    (_generate_pdf_html) and the Word exporter (generate_docx via LibreOffice)
+    call this function, guaranteeing both outputs render from identical HTML/CSS.
+    """
+    return f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
@@ -848,6 +853,15 @@ def _generate_pdf_html(contract, html_body, revision=None):
 </body>
 </html>"""
 
+
+def _generate_pdf_html(contract, html_body, revision=None):
+    """Generate a PDF from the contract body only — no administrative metadata.
+
+    Uses _build_contract_html() for the HTML/CSS so the output is guaranteed
+    to match the Word export produced by generate_docx().
+    """
+    html = _build_contract_html(html_body)
+
     buf = BytesIO()
     if XHTML2PDF_AVAILABLE:
         pisa.CreatePDF(html, dest=buf)
@@ -877,644 +891,184 @@ def _generate_pdf_html(contract, html_body, revision=None):
     return buf
 
 
-def _get_para_align(element):
-    """Read text-align from an element's style attribute and return WD_ALIGN_PARAGRAPH."""
-    style = element.get('style', '')
-    classes = element.get('class', [])
-    if isinstance(classes, str):
-        classes = classes.split()
-    # Class-implied alignment
-    if any(c in classes for c in ('doc-title', 'doc-subtitle', 'caption')):
-        return WD_ALIGN_PARAGRAPH.CENTER
-    # Inline style
-    for part in style.replace(' ', '').split(';'):
-        if part.startswith('text-align:'):
-            val = part.split(':', 1)[1].lower()
-            if val == 'center':  return WD_ALIGN_PARAGRAPH.CENTER
-            if val == 'right':   return WD_ALIGN_PARAGRAPH.RIGHT
-            if val == 'justify': return WD_ALIGN_PARAGRAPH.JUSTIFY
-    return None
 
 
-def _parse_css_props(style_str):
-    """Parse a CSS inline style string → dict of {prop: value}."""
-    props = {}
-    for decl in (style_str or '').split(';'):
-        decl = decl.strip()
-        if ':' in decl:
-            k, _, v = decl.partition(':')
-            props[k.strip().lower()] = v.strip()
-    return props
 
 
-def _css_color_to_rgb(value):
-    """Convert a CSS colour value to an (r, g, b) int tuple, or None."""
-    from docx.shared import RGBColor
-    v = (value or '').strip().lower()
-    if v.startswith('#'):
-        h = v[1:]
-        if len(h) == 3:
-            h = h[0] * 2 + h[1] * 2 + h[2] * 2
-        if len(h) == 6:
-            try:
-                return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
-            except ValueError:
-                pass
-    elif v.startswith('rgb('):
-        try:
-            parts = v[4:v.index(')')].split(',')
-            return tuple(int(p.strip()) for p in parts[:3])
-        except Exception:
-            pass
-    _NAMED = {
-        'black': (0, 0, 0), 'white': (255, 255, 255), 'red': (220, 38, 38),
-        'blue': (37, 99, 235), 'green': (22, 163, 74), 'gray': (107, 114, 128),
-        'grey': (107, 114, 128), 'navy': (26, 39, 66), 'orange': (234, 88, 12),
-        'purple': (124, 58, 237), 'yellow': (202, 138, 4),
-    }
-    return _NAMED.get(v)
+def _apply_docx_styles(doc):
+    """Apply Arial / size / colour styles to a python-docx Document.
 
-
-def _add_inline_to_para(para, node, bold=False, italic=False,
-                         underline=False, strike=False,
-                         color=None, font_size_pt=None,
-                         default_color=None, default_font_size_pt=None):
-    """Recursively add inline HTML into a docx paragraph, applying all formatting.
-
-    Formatting flags (bold, italic, etc.) and CSS-derived properties (colour,
-    font-size) accumulate as we descend so that nested markup like
-    <strong><em><span style="color:#f00">text</span></em></strong> is handled
-    correctly at every level.
-
-    default_color / default_font_size_pt are used when no HTML colour/size is
-    present. Pass them from the block context (e.g. table cells use 9.5 pt;
-    th cells use #1a2742).
+    Called after html2docx converts the HTML structure so that fonts, heading
+    sizes and colours match the PDF CSS exactly.  Every run in the document is
+    also touched so Word theme fonts (Calibri/Cambria) cannot override the
+    result.
     """
-    if isinstance(node, NavigableString):
-        text = str(node)
-        if text:
-            run = para.add_run(text)
-            # Always set font name explicitly — Word theme fonts (Calibri) would
-            # otherwise override the document default we set in generate_docx().
-            run.font.name = 'Arial'
-            if bold:         run.bold        = True
-            if italic:       run.italic      = True
-            if underline:    run.underline   = True
-            if strike:       run.font.strike = True
-            # Colour priority: HTML-specified > block default > docDefaults (not set)
-            effective_color = color if color is not None else default_color
-            if effective_color is not None:
-                try:
-                    from docx.shared import RGBColor
-                    run.font.color.rgb = RGBColor(*effective_color)
-                except Exception:
-                    pass
-            # Size priority: HTML-specified > block default > style/docDefaults
-            effective_size = font_size_pt if font_size_pt is not None else default_font_size_pt
-            if effective_size is not None:
-                try:
-                    from docx.shared import Pt
-                    run.font.size = Pt(effective_size)
-                except Exception:
-                    pass
-        return
-
-    if not isinstance(node, Tag):
-        return
-
-    tag = node.name.lower()
-
-    if tag == 'br':
-        # Use a real Word line-break element so "print to PDF" renders correctly
-        try:
-            from docx.oxml import OxmlElement as _ILE
-            _br_run = para.add_run()
-            _br_run._element.append(_ILE('w:br'))
-        except Exception:
-            para.add_run('\n')
-        return
-
-    # Accumulate semantic formatting flags
-    _bold      = bold      or tag in ('strong', 'b')
-    _italic    = italic    or tag in ('em', 'i')
-    _underline = underline or tag == 'u'
-    _strike    = strike    or tag in ('s', 'strike', 'del')
-    _color     = color
-    _font_size = font_size_pt
-
-    # Parse inline CSS from any element (most commonly <span style="...">)
-    style_str = node.get('style', '')
-    if style_str:
-        props = _parse_css_props(style_str)
-        if 'color' in props:
-            c = _css_color_to_rgb(props['color'])
-            if c:
-                _color = c
-        if 'font-size' in props:
-            fs = props['font-size']
-            try:
-                if fs.endswith('pt'):
-                    _font_size = float(fs[:-2])
-                elif fs.endswith('px'):
-                    _font_size = round(float(fs[:-2]) * 0.75, 1)
-            except ValueError:
-                pass
-        if 'font-weight' in props:
-            fw = props['font-weight'].strip().lower()
-            if fw in ('bold', '700', '800', '900'):
-                _bold = True
-        if 'font-style' in props:
-            if props['font-style'].strip().lower() == 'italic':
-                _italic = True
-        if 'text-decoration' in props:
-            if 'underline' in props['text-decoration'].lower():
-                _underline = True
-
-    for child in node.children:
-        _add_inline_to_para(para, child, _bold, _italic, _underline, _strike,
-                            _color, _font_size, default_color, default_font_size_pt)
-
-
-def _html_to_docx_body(doc, html_content):
-    """Parse an HTML fragment and append its content to a python-docx Document."""
-    if not BS4_AVAILABLE:
-        import html as _hl
-        plain = _hl.unescape(re.sub(r'<[^>]+>', ' ', html_content))
-        for para in plain.split('\n'):
-            para = para.strip()
-            if para:
-                doc.add_paragraph(para)
-        return
-    soup = BeautifulSoup(html_content, 'lxml')
-    body = soup.find('body') or soup
-    _add_block_children(doc, body, left_indent=None)
-
-
-def _add_block_children(doc, parent, left_indent=None):
-    """Walk direct children of a block element, dispatching each to _add_block_element."""
-    for element in parent.children:
-        if isinstance(element, NavigableString):
-            text = str(element).strip()
-            if text:
-                p = doc.add_paragraph(text)
-                if left_indent is not None:
-                    p.paragraph_format.left_indent = left_indent
-            continue
-        if isinstance(element, Tag):
-            _add_block_element(doc, element, left_indent=left_indent)
-
-
-def _add_block_element(doc, element, left_indent=None):
-    """Convert one block-level HTML element into python-docx content."""
-    tag = element.name.lower()
-    classes = element.get('class', [])
-    if isinstance(classes, str):
-        classes = classes.split()
-
-    # ── Headings ────────────────────────────────────────────────────────────
-    # Spacing matches PDF CSS exactly (see _generate_pdf_html):
-    #   h1 { margin: 12pt 0 5pt 0 }   h2 { margin: 10pt 0 4pt 0 }
-    #   h3 { margin:  8pt 0 3pt 0 }   h4-h6 { margin: 6pt 0 2pt 0 }
-    _HEADING_SPACING = {
-        1: (Pt(12), Pt(5)),
-        2: (Pt(10), Pt(4)),
-        3: (Pt(8),  Pt(3)),
-        4: (Pt(6),  Pt(2)),
-        5: (Pt(6),  Pt(2)),
-        6: (Pt(6),  Pt(2)),
+    # ── Named styles ────────────────────────────────────────────────────────
+    _HEADING_DEFS = {
+        # level: (pt_size, hex_colour, space_before_pt, space_after_pt)
+        1: (14, '1a2742', 12, 5),
+        2: (12, '1a2742', 10, 4),
+        3: (11, '374151',  8, 3),
+        4: (10, '374151',  6, 2),
+        5: (10, '374151',  6, 2),
+        6: (10, '374151',  6, 2),
     }
-    if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
-        level = int(tag[1])
-        para = doc.add_heading('', level=level)
-        for child in element.children:
-            _add_inline_to_para(para, child)
-        align = _get_para_align(element)
-        if align is not None:
-            para.alignment = align
-        if left_indent is not None:
-            para.paragraph_format.left_indent = left_indent
-        sb, sa = _HEADING_SPACING.get(level, (Pt(12), Pt(4)))
-        para.paragraph_format.space_before = sb
-        para.paragraph_format.space_after  = sa
+    try:
+        n = doc.styles['Normal']
+        n.font.name = 'Arial'
+        n.font.size = Pt(10)
+        n.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
+        n.paragraph_format.space_before = Pt(3)
+        n.paragraph_format.space_after  = Pt(5)
+    except Exception:
+        pass
 
-    # ── Paragraph ───────────────────────────────────────────────────────────
-    elif tag == 'p':
-        para = doc.add_paragraph()
-        for child in element.children:
-            _add_inline_to_para(para, child)
-        align = _get_para_align(element)
-        if align is not None:
-            para.alignment = align
-        if 'list-paragraph' in classes:
-            para.paragraph_format.left_indent = Inches(0.5)
-        elif left_indent is not None:
-            para.paragraph_format.left_indent = left_indent
-        # Apply inline margin overrides if present
-        el_css = _parse_css_props(element.get('style', ''))
-        for css_prop, docx_attr in (('margin-top', 'space_before'),
-                                     ('margin-bottom', 'space_after')):
-            if css_prop in el_css:
-                raw = el_css[css_prop].strip()
-                try:
-                    if raw.endswith('pt'):
-                        setattr(para.paragraph_format, docx_attr, Pt(float(raw[:-2])))
-                    elif raw.endswith('px'):
-                        setattr(para.paragraph_format, docx_attr, Pt(round(float(raw[:-2]) * 0.75, 1)))
-                except (ValueError, AttributeError):
-                    pass
-
-    # ── Lists ────────────────────────────────────────────────────────────────
-    elif tag in ('ul', 'ol'):
-        style = 'List Bullet' if tag == 'ul' else 'List Number'
-        for li in element.find_all('li', recursive=False):
-            para = doc.add_paragraph(style=style)
-            for child in li.children:
-                _add_inline_to_para(para, child)
-            if left_indent is not None:
-                para.paragraph_format.left_indent = left_indent
-
-    # ── Table ────────────────────────────────────────────────────────────────
-    elif tag == 'table':
-        rows_html = element.find_all('tr')
-        if not rows_html:
-            return
-        max_cols = max((len(r.find_all(['td', 'th'])) for r in rows_html), default=0)
-        if max_cols == 0:
-            return
-        tbl = doc.add_table(rows=len(rows_html), cols=max_cols)
-        tbl.style = 'Table Grid'
-        # Set table to 100 % page width (6.5 in between 1-inch margins = 9360 twips)
+    for lvl, (sz, col_hex, sb, sa) in _HEADING_DEFS.items():
         try:
-            from docx.oxml.ns import qn as _qn
-            from docx.oxml import OxmlElement as _OE
-            _PAGE_W_TWIPS = 9360
-            _col_w_twips  = _PAGE_W_TWIPS // max_cols
-            tblPr = tbl._element.find(_qn('w:tblPr'))
-            if tblPr is None:
-                tblPr = _OE('w:tblPr')
-                tbl._element.insert(0, tblPr)
-            tblW = tblPr.find(_qn('w:tblW'))
-            if tblW is None:
-                tblW = _OE('w:tblW')
-                tblPr.append(tblW)
-            tblW.set(_qn('w:w'), str(_PAGE_W_TWIPS))
-            tblW.set(_qn('w:type'), 'dxa')
-            # Table borders: 0.5pt solid #374151 (matches PDF td,th { border })
-            _tblBorders = tblPr.find(_qn('w:tblBorders'))
-            if _tblBorders is None:
-                _tblBorders = _OE('w:tblBorders'); tblPr.append(_tblBorders)
-            for _side in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
-                _b_el = _tblBorders.find(_qn(f'w:{_side}'))
-                if _b_el is None:
-                    _b_el = _OE(f'w:{_side}'); _tblBorders.append(_b_el)
-                _b_el.set(_qn('w:val'),   'single')
-                _b_el.set(_qn('w:sz'),    '4')       # 4 eighths = 0.5 pt
-                _b_el.set(_qn('w:space'), '0')
-                _b_el.set(_qn('w:color'), '374151')
-            # Default cell margins: 4pt top/bottom, 7pt left/right (PDF padding)
-            _tblCellMar = tblPr.find(_qn('w:tblCellMar'))
-            if _tblCellMar is None:
-                _tblCellMar = _OE('w:tblCellMar'); tblPr.append(_tblCellMar)
-            for _side, _w_twips in (('top', 80), ('left', 140),
-                                    ('bottom', 80), ('right', 140)):
-                _m_el = _tblCellMar.find(_qn(f'w:{_side}'))
-                if _m_el is None:
-                    _m_el = _OE(f'w:{_side}'); _tblCellMar.append(_m_el)
-                _m_el.set(_qn('w:w'),    str(_w_twips))
-                _m_el.set(_qn('w:type'), 'dxa')
-            # Set equal column widths via cell tcW elements
-            for row in tbl.rows:
-                for cell in row.cells:
-                    tcPr = cell._tc.get_or_add_tcPr()
-                    existing_tcW = tcPr.find(_qn('w:tcW'))
-                    if existing_tcW is not None:
-                        tcPr.remove(existing_tcW)
-                    tcW = _OE('w:tcW')
-                    tcW.set(_qn('w:w'), str(_col_w_twips))
-                    tcW.set(_qn('w:type'), 'dxa')
-                    tcPr.insert(0, tcW)
-        except Exception:
-            pass
-        for ri, row_el in enumerate(rows_html):
-            for ci, cell_el in enumerate(row_el.find_all(['td', 'th'])):
-                if ci >= max_cols:
-                    break
-                cell = tbl.cell(ri, ci)
-                cell.text = ''
-                is_header = cell_el.name == 'th'
-
-                # Apply header-cell background fill (matches PDF CSS:
-                # th { background: #f1f5f9 })
-                if is_header:
-                    try:
-                        from docx.oxml.ns import qn as _qn2
-                        from docx.oxml import OxmlElement as _OE2
-                        _tcPr = cell._tc.get_or_add_tcPr()
-                        _shd  = _tcPr.find(_qn2('w:shd'))
-                        if _shd is None:
-                            _shd = _OE2('w:shd')
-                            _tcPr.insert(0, _shd)
-                        _shd.set(_qn2('w:val'),   'clear')
-                        _shd.set(_qn2('w:color'), 'auto')
-                        _shd.set(_qn2('w:fill'),  'F1F5F9')
-                    except Exception:
-                        pass
-
-                # Get direct <p>/<hN> block children (each becomes its own paragraph)
-                block_children = [c for c in cell_el.children
-                                  if isinstance(c, Tag) and c.name in
-                                  ('p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6')]
-
-                # PDF CSS: table { font-size: 9.5pt }; th { color: #1a2742 }
-                _cell_dfsize = 9.5
-                _cell_dfcol  = (0x1a, 0x27, 0x42) if is_header else None
-
-                if block_children:
-                    para = cell.paragraphs[0]
-                    for pi, blk in enumerate(block_children):
-                        if pi > 0:
-                            para = cell.add_paragraph()
-                        for child in blk.children:
-                            _add_inline_to_para(para, child,
-                                                bold=is_header,
-                                                default_color=_cell_dfcol,
-                                                default_font_size_pt=_cell_dfsize)
-                        c_align = _get_para_align(blk)
-                        if c_align is not None:
-                            para.alignment = c_align
-                else:
-                    # No block wrappers — treat all children as inline content
-                    para = cell.paragraphs[0]
-                    for child in cell_el.children:
-                        _add_inline_to_para(para, child,
-                                            bold=is_header,
-                                            default_color=_cell_dfcol,
-                                            default_font_size_pt=_cell_dfsize)
-                    c_align = _get_para_align(cell_el)
-                    if c_align is not None:
-                        para.alignment = c_align
-
-    # ── Blockquote — indented container ──────────────────────────────────────
-    # PDF: margin-left:20pt + padding-left:8pt = 28pt total left offset
-    elif tag == 'blockquote':
-        _bq_para_start = len(doc.paragraphs)
-        _add_block_children(doc, element, left_indent=Inches(28 / 72.0))
-        # Apply left border (2pt solid #d1d5db) and colour (#6b7280)
-        try:
-            from docx.oxml.ns import qn as _bqn
-            from docx.oxml import OxmlElement as _BOE
-            from docx.shared import RGBColor as _BQRGB
-            for _bq_para in doc.paragraphs[_bq_para_start:]:
-                _pPr2 = _bq_para._element.get_or_add_pPr()
-                _pBdr = _pPr2.find(_bqn('w:pBdr'))
-                if _pBdr is None:
-                    _pBdr = _BOE('w:pBdr'); _pPr2.append(_pBdr)
-                _lft = _pBdr.find(_bqn('w:left'))
-                if _lft is None:
-                    _lft = _BOE('w:left'); _pBdr.append(_lft)
-                _lft.set(_bqn('w:val'),   'single')
-                _lft.set(_bqn('w:sz'),    '16')    # 2pt = 16 eighths
-                _lft.set(_bqn('w:space'), '4')
-                _lft.set(_bqn('w:color'), 'D1D5DB')
-                for _bq_run in _bq_para.runs:
-                    _bq_run.font.color.rgb = _BQRGB(0x6b, 0x72, 0x80)
+            h = doc.styles[f'Heading {lvl}']
+            h.font.name = 'Arial'
+            h.font.size = Pt(sz)
+            h.font.bold = True
+            r, g, b = int(col_hex[:2], 16), int(col_hex[2:4], 16), int(col_hex[4:], 16)
+            h.font.color.rgb = RGBColor(r, g, b)
+            h.paragraph_format.space_before = Pt(sb)
+            h.paragraph_format.space_after  = Pt(sa)
         except Exception:
             pass
 
-    # ── Generic containers ───────────────────────────────────────────────────
-    elif tag in ('div', 'section', 'article', 'main', 'aside', 'figure'):
-        _add_block_children(doc, element, left_indent=left_indent)
+    # ── Explicit Arial on every run — prevents Word theme-font override ──────
+    for para in doc.paragraphs:
+        for run in para.runs:
+            run.font.name = 'Arial'
+    for tbl in doc.tables:
+        for row in tbl.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        run.font.name = 'Arial'
 
-    # ── Horizontal rule ──────────────────────────────────────────────────────
-    elif tag == 'hr':
-        doc.add_paragraph('─' * 60)
-
-    # ── Line break as spacing paragraph ──────────────────────────────────────
-    elif tag == 'br':
-        doc.add_paragraph()
-
-    # Skip: script, style, head, noscript, etc.
+    # ── docDefaults at XML level — last-resort fallback ─────────────────────
+    try:
+        se = doc.styles._element
+        dd = se.find(qn('w:docDefaults'))
+        if dd is None:
+            dd = OxmlElement('w:docDefaults')
+            se.insert(0, dd)
+        rpd = dd.find(qn('w:rPrDefault'))
+        if rpd is None:
+            rpd = OxmlElement('w:rPrDefault')
+            dd.append(rpd)
+        rp = rpd.find(qn('w:rPr'))
+        if rp is None:
+            rp = OxmlElement('w:rPr')
+            rpd.append(rp)
+        rf = rp.find(qn('w:rFonts'))
+        if rf is None:
+            rf = OxmlElement('w:rFonts')
+            rp.insert(0, rf)
+        for attr in ('w:ascii', 'w:hAnsi', 'w:cs', 'w:eastAsia'):
+            rf.set(qn(attr), 'Arial')
+        for attr in ('w:asciiTheme', 'w:hAnsiTheme', 'w:cstheme', 'w:eastAsiaTheme'):
+            try:
+                del rf.attrib[qn(attr)]
+            except KeyError:
+                pass
+        sz_el = rp.find(qn('w:sz'))
+        if sz_el is None:
+            sz_el = OxmlElement('w:sz')
+            rp.append(sz_el)
+        sz_el.set(qn('w:val'), '20')   # 10 pt = 20 half-points
+        col_el = rp.find(qn('w:color'))
+        if col_el is None:
+            col_el = OxmlElement('w:color')
+            rp.append(col_el)
+        col_el.set(qn('w:val'), '374151')
+    except Exception:
+        pass
 
 
 def generate_docx(contract, revision=None):
-    """Generate a Word (.docx) containing only the contract body.
+    """Generate a Word (.docx) that matches the PDF export.
 
-    Document-level styles are set to match the PDF output (Arial 10 pt,
-    colour #374151 for body; matching size/colour/weight for headings) so
-    that DOCX and PDF exports look identical to the reader.
+    Strategy
+    --------
+    1. Build the same HTML/CSS block used by the PDF exporter
+       (_build_contract_html) — single source of truth for content and layout.
+    2. Feed it to *html2docx* (pip: html2docx) which converts HTML structure
+       (headings, paragraphs, bold/italic, tables, lists, blockquotes) into a
+       python-docx Document without any of the lossy hand-mapping in the old
+       code.
+    3. Post-process with _apply_docx_styles() to stamp Arial / PDF-matching
+       colours / sizes onto every style and run, because html2docx does not
+       read inline CSS for font properties.
+    4. Set 1-inch page margins to match the PDF @page rule.
+
+    The result matches the PDF visually for all structural elements the
+    contract editor produces.
     """
-    if not DOCX_AVAILABLE:
+    try:
+        from html2docx import html2docx as _h2d
+    except ImportError:
+        app.logger.error('generate_docx: html2docx not installed')
         return None
 
-    doc = DocxDocument()
-
-    # ── Standard 1-inch page margins ────────────────────────────────────────
-    for section in doc.sections:
-        section.left_margin   = Inches(1)
-        section.right_margin  = Inches(1)
-        section.top_margin    = Inches(1)
-        section.bottom_margin = Inches(1)
-
-    # ── Base style — matches PDF: Arial 10 pt, colour #374151 ───────────────
-    # Also set these at XML (docDefaults) level below — Word's theme fonts
-    # silently override style.font.name unless the XML default is explicit too.
-    try:
-        from docx.oxml.ns import qn as _sqn
-        from docx.oxml import OxmlElement as _SOE
-        normal = doc.styles['Normal']
-        normal.font.name      = 'Arial'
-        normal.font.size      = Pt(10)
-        normal.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
-        # PDF CSS: p { margin: 3pt 0 5pt 0 }
-        normal.paragraph_format.space_before = Pt(3)
-        normal.paragraph_format.space_after  = Pt(5)
-        # PDF CSS: line-height: 1.6  →  384 twips (240 × 1.6)
-        _n_pPr = normal.element.find(_sqn('w:pPr'))
-        if _n_pPr is None:
-            _n_pPr = _SOE('w:pPr'); normal.element.append(_n_pPr)
-        _n_sp = _n_pPr.find(_sqn('w:spacing'))
-        if _n_sp is None:
-            _n_sp = _SOE('w:spacing'); _n_pPr.append(_n_sp)
-        _n_sp.set(_sqn('w:line'), '384'); _n_sp.set(_sqn('w:lineRule'), 'auto')
-    except Exception:
-        pass
-
-    # ── Heading styles — match PDF CSS exactly ────────────────────────────────
-    # h1: 14pt #1a2742  margin:12pt 0 5pt 0
-    # h2: 12pt #1a2742  margin:10pt 0 4pt 0
-    # h3: 11pt #374151  margin: 8pt 0 3pt 0
-    # h4-h6: 10pt #374151  margin: 6pt 0 2pt 0
-    _HEADING_DEFS = {
-        1: (Pt(14), RGBColor(0x1a, 0x27, 0x42), Pt(12), Pt(5)),
-        2: (Pt(12), RGBColor(0x1a, 0x27, 0x42), Pt(10), Pt(4)),
-        3: (Pt(11), RGBColor(0x37, 0x41, 0x51), Pt(8),  Pt(3)),
-        4: (Pt(10), RGBColor(0x37, 0x41, 0x51), Pt(6),  Pt(2)),
-        5: (Pt(10), RGBColor(0x37, 0x41, 0x51), Pt(6),  Pt(2)),
-        6: (Pt(10), RGBColor(0x37, 0x41, 0x51), Pt(6),  Pt(2)),
-    }
-    for level, (size, color, sb, sa) in _HEADING_DEFS.items():
-        try:
-            from docx.oxml.ns import qn as _hqn
-            from docx.oxml import OxmlElement as _HOE
-            h = doc.styles[f'Heading {level}']
-            h.font.name      = 'Arial'
-            h.font.size      = size
-            h.font.color.rgb = color
-            h.font.bold      = True
-            h.paragraph_format.space_before = sb
-            h.paragraph_format.space_after  = sa
-            # Remove theme-font attrs that override explicit font names
-            _h_rPr = h.element.find(_hqn('w:rPr'))
-            if _h_rPr is not None:
-                _h_rFonts = _h_rPr.find(_hqn('w:rFonts'))
-                if _h_rFonts is not None:
-                    for _ta in ('w:asciiTheme', 'w:hAnsiTheme',
-                                'w:cstheme', 'w:eastAsiaTheme'):
-                        try: del _h_rFonts.attrib[_hqn(_ta)]
-                        except KeyError: pass
-            # Line spacing 1.6× in the heading style
-            _h_pPr = h.element.find(_hqn('w:pPr'))
-            if _h_pPr is None:
-                _h_pPr = _HOE('w:pPr'); h.element.append(_h_pPr)
-            _h_sp = _h_pPr.find(_hqn('w:spacing'))
-            if _h_sp is None:
-                _h_sp = _HOE('w:spacing'); _h_pPr.append(_h_sp)
-            _h_sp.set(_hqn('w:line'), '384'); _h_sp.set(_hqn('w:lineRule'), 'auto')
-        except Exception:
-            pass
-
-    # ── List styles — consistent font ────────────────────────────────────────
-    for lst_style in ('List Bullet', 'List Number', 'List Paragraph'):
-        try:
-            s = doc.styles[lst_style]
-            s.font.name = 'Arial'
-            s.font.size = Pt(10)
-        except Exception:
-            pass
-
-    # ── docDefaults: force Arial 10pt #374151 at the XML layer ───────────────
-    # This is the definitive fallback; theme fonts cannot override docDefaults.
-    try:
-        from docx.oxml.ns import qn as _dqn
-        from docx.oxml import OxmlElement as _DOE
-        _styles_el = doc.styles._element   # <w:styles> root of word/styles.xml
-        if _styles_el is not None:
-            _dd = _styles_el.find(_dqn('w:docDefaults'))
-            if _dd is None:
-                _dd = _DOE('w:docDefaults'); _styles_el.insert(0, _dd)
-            # ── Run property defaults ─────────────────────────────────────
-            _rPrDef = _dd.find(_dqn('w:rPrDefault'))
-            if _rPrDef is None:
-                _rPrDef = _DOE('w:rPrDefault'); _dd.append(_rPrDef)
-            _rPr = _rPrDef.find(_dqn('w:rPr'))
-            if _rPr is None:
-                _rPr = _DOE('w:rPr'); _rPrDef.append(_rPr)
-            # Font name (remove theme attrs, set explicit Arial)
-            _rFonts = _rPr.find(_dqn('w:rFonts'))
-            if _rFonts is None:
-                _rFonts = _DOE('w:rFonts'); _rPr.insert(0, _rFonts)
-            for _fa in ('w:ascii', 'w:hAnsi', 'w:cs', 'w:eastAsia'):
-                _rFonts.set(_dqn(_fa), 'Arial')
-            for _ta in ('w:asciiTheme', 'w:hAnsiTheme', 'w:cstheme', 'w:eastAsiaTheme'):
-                try: del _rFonts.attrib[_dqn(_ta)]
-                except KeyError: pass
-            # Font size: 10pt = 20 half-points
-            for _sz_tag in ('w:sz', 'w:szCs'):
-                _sz_el = _rPr.find(_dqn(_sz_tag))
-                if _sz_el is None:
-                    _sz_el = _DOE(_sz_tag); _rPr.append(_sz_el)
-                _sz_el.set(_dqn('w:val'), '20')
-            # Colour: #374151
-            _col_el = _rPr.find(_dqn('w:color'))
-            if _col_el is None:
-                _col_el = _DOE('w:color'); _rPr.append(_col_el)
-            _col_el.set(_dqn('w:val'), '374151')
-            # ── Paragraph property defaults ───────────────────────────────
-            _pPrDef = _dd.find(_dqn('w:pPrDefault'))
-            if _pPrDef is None:
-                _pPrDef = _DOE('w:pPrDefault'); _dd.append(_pPrDef)
-            _pPr = _pPrDef.find(_dqn('w:pPr'))
-            if _pPr is None:
-                _pPr = _DOE('w:pPr'); _pPrDef.append(_pPr)
-            _lSp = _pPr.find(_dqn('w:spacing'))
-            if _lSp is None:
-                _lSp = _DOE('w:spacing'); _pPr.append(_lSp)
-            # 1.6× line spacing; 3pt before / 5pt after to match PDF p{}
-            _lSp.set(_dqn('w:line'),     '384')   # 240 twips/line × 1.6
-            _lSp.set(_dqn('w:lineRule'), 'auto')
-            _lSp.set(_dqn('w:before'),   '60')    # 3pt
-            _lSp.set(_dqn('w:after'),    '100')   # 5pt
-    except Exception:
-        pass
-
-    # ── Contract content only ────────────────────────────────────────────────
     content = ''
     if revision:
         content = revision.content
     elif contract.latest_revision:
         content = contract.latest_revision.content
 
-    if content:
-        if is_html_content(content):
-            _html_to_docx_body(doc, content)
-        else:
-            # Plain-text content — mirror the PDF path: detect ALL-CAPS lines
-            # as section headings so the Word output matches the PDF structure.
-            for para_text in content.split('\n\n'):
-                para_text = para_text.strip()
-                if not para_text:
-                    continue
-                lines = para_text.split('\n')
-                first_line = lines[0].strip()
-                if first_line.isupper() and 3 < len(first_line) < 80:
-                    doc.add_heading(first_line, level=2)
-                    if len(lines) > 1:
-                        rest = ' '.join(lines[1:]).strip()
-                        if rest:
-                            doc.add_paragraph(rest)
-                else:
-                    doc.add_paragraph(para_text.replace('\n', ' '))
+    if not content:
+        content = '<p></p>'
 
-    # ── Save then post-process the ZIP ──────────────────────────────────────
-    # Two files inside every python-docx output prevent our formatting from
-    # taking effect in Word:
-    #
-    # 1. word/theme/theme1.xml  — defines majorHAnsi=Cambria, minorHAnsi=Calibri.
-    #    Word resolves style-level "use theme body font" references through this
-    #    file. Even though our runs have explicit w:ascii="Arial", some Word
-    #    builds on certain platforms resolve the theme first and ignore the
-    #    run-level override.  Fix: replace every <a:latin typeface="…"/> in the
-    #    font scheme with Arial so the theme itself resolves to Arial.
-    #
-    # 2. word/stylesWithEffects.xml — a duplicate of styles.xml that includes
-    #    visual-effect metadata.  Word *may* prefer this file over styles.xml
-    #    when present; it still carries the original minorHAnsi/majorHAnsi
-    #    references because python-docx never writes to it.  Fix: drop the file
-    #    entirely — Word silently falls back to styles.xml.
-    _raw = BytesIO()
-    doc.save(_raw)
-    _raw.seek(0)
-
-    import zipfile as _zf
-    _out = BytesIO()
-    with _zf.ZipFile(_raw, 'r') as _zin, \
-         _zf.ZipFile(_out, 'w', _zf.ZIP_DEFLATED) as _zout:
-        for _item in _zin.infolist():
-            # Drop the stale duplicate styles file
-            if _item.filename == 'word/stylesWithEffects.xml':
+    # Build HTML body — mirror the PDF path exactly
+    if is_html_content(content):
+        body_html = content
+    else:
+        # Plain text: detect ALL-CAPS headings to match the PDF plain-text path
+        import html as _hl
+        parts = []
+        for blk in content.split('\n\n'):
+            blk = blk.strip()
+            if not blk:
                 continue
-            _data = _zin.read(_item.filename)
-            # Patch theme: both font slots → Arial
-            if _item.filename == 'word/theme/theme1.xml':
-                _data = re.sub(
-                    rb'(<a:latin\s[^>]*typeface=")[^"]*(")',
-                    rb'\1Arial\2',
-                    _data,
-                )
-            _zout.writestr(_item, _data)
+            lines = blk.split('\n')
+            first = lines[0].strip()
+            if first.isupper() and 3 < len(first) < 80:
+                parts.append(f'<h2>{_hl.escape(first)}</h2>')
+                rest = ' '.join(lines[1:]).strip()
+                if rest:
+                    parts.append(f'<p>{_hl.escape(rest)}</p>')
+            else:
+                parts.append(f'<p>{_hl.escape(blk.replace(chr(10), " "))}</p>')
+        body_html = '\n'.join(parts)
 
-    _out.seek(0)
-    return _out
+    # Wrap in a minimal full-HTML document (html2docx needs <html><body>)
+    full_html = f'<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>{body_html}</body></html>'
+
+    try:
+        raw_buf = _h2d(full_html, title=contract.title or 'Contract')
+        raw_buf.seek(0)
+
+        doc = DocxDocument(raw_buf)
+
+        # 1-inch margins — matches PDF @page { margin: 1in }
+        for section in doc.sections:
+            section.left_margin   = Inches(1)
+            section.right_margin  = Inches(1)
+            section.top_margin    = Inches(1)
+            section.bottom_margin = Inches(1)
+
+        _apply_docx_styles(doc)
+
+        buf = BytesIO()
+        doc.save(buf)
+        buf.seek(0)
+        return buf
+
+    except Exception as exc:
+        app.logger.error('generate_docx: error — %s', exc)
+        return None
 
 
 # ─── Auth Routes ──────────────────────────────────────────────────────────────
@@ -2283,8 +1837,10 @@ def contracts_docx(contract_id):
     else:
         revision = contract.latest_revision
 
-    if not DOCX_AVAILABLE:
-        flash('Word document export is not available (python-docx not installed).', 'error')
+    try:
+        import html2docx as _h2d_check  # noqa: F401
+    except ImportError:
+        flash('Word document export is not available (html2docx not installed).', 'error')
         return redirect(url_for('contracts_detail', contract_id=contract_id))
 
     docx_buffer = generate_docx(contract, revision)

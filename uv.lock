@@ -370,6 +370,19 @@ wheels = [
 ]
 
 [[package]]
+name = "html2docx"
+version = "1.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-docx" },
+    { name = "tinycss2" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c0/6c/a1122f2fe5a772b0c63e0a4966c7ae093f81ff23aa8ee04bba6b69c54e40/html2docx-1.6.0.tar.gz", hash = "sha256:13ef5653d7a3ffe625251705f15ae203938ce2f98be93e62f6fdf80630c33d2d", size = 47045, upload-time = "2023-01-19T01:59:07.558Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/97/f2/291d81ff6699c3874cd4143cd2815bd82f8d4129c6ef7bfdfcd410db6132/html2docx-1.6.0-py3-none-any.whl", hash = "sha256:ec7ceacb53eaf4ad5217d96f61dbd5cd62bc6f28d3830e4721e5428300255bdf", size = 35686, upload-time = "2023-01-19T01:59:06.17Z" },
+]
+
+[[package]]
 name = "html5lib"
 version = "1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -812,6 +825,7 @@ dependencies = [
     { name = "flask-login" },
     { name = "flask-sqlalchemy" },
     { name = "flask-wtf" },
+    { name = "html2docx" },
     { name = "lxml" },
     { name = "mammoth" },
     { name = "psycopg2-binary" },
@@ -830,6 +844,7 @@ requires-dist = [
     { name = "flask-login", specifier = ">=0.6.3" },
     { name = "flask-sqlalchemy", specifier = ">=3.1.1" },
     { name = "flask-wtf", specifier = "==1.2.1" },
+    { name = "html2docx", specifier = ">=1.6.0" },
     { name = "lxml", specifier = ">=6.1.1" },
     { name = "mammoth", specifier = ">=1.12.0" },
     { name = "psycopg2-binary", specifier = ">=2.9.12" },
