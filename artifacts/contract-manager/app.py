@@ -937,32 +937,44 @@ def _css_color_to_rgb(value):
 
 def _add_inline_to_para(para, node, bold=False, italic=False,
                          underline=False, strike=False,
-                         color=None, font_size_pt=None):
+                         color=None, font_size_pt=None,
+                         default_color=None, default_font_size_pt=None):
     """Recursively add inline HTML into a docx paragraph, applying all formatting.
 
     Formatting flags (bold, italic, etc.) and CSS-derived properties (colour,
     font-size) accumulate as we descend so that nested markup like
     <strong><em><span style="color:#f00">text</span></em></strong> is handled
     correctly at every level.
+
+    default_color / default_font_size_pt are used when no HTML colour/size is
+    present. Pass them from the block context (e.g. table cells use 9.5 pt;
+    th cells use #1a2742).
     """
     if isinstance(node, NavigableString):
         text = str(node)
         if text:
             run = para.add_run(text)
+            # Always set font name explicitly — Word theme fonts (Calibri) would
+            # otherwise override the document default we set in generate_docx().
+            run.font.name = 'Arial'
             if bold:         run.bold        = True
             if italic:       run.italic      = True
             if underline:    run.underline   = True
             if strike:       run.font.strike = True
-            if color:
+            # Colour priority: HTML-specified > block default > docDefaults (not set)
+            effective_color = color if color is not None else default_color
+            if effective_color is not None:
                 try:
                     from docx.shared import RGBColor
-                    run.font.color.rgb = RGBColor(*color)
+                    run.font.color.rgb = RGBColor(*effective_color)
                 except Exception:
                     pass
-            if font_size_pt:
+            # Size priority: HTML-specified > block default > style/docDefaults
+            effective_size = font_size_pt if font_size_pt is not None else default_font_size_pt
+            if effective_size is not None:
                 try:
                     from docx.shared import Pt
-                    run.font.size = Pt(font_size_pt)
+                    run.font.size = Pt(effective_size)
                 except Exception:
                     pass
         return
@@ -973,7 +985,13 @@ def _add_inline_to_para(para, node, bold=False, italic=False,
     tag = node.name.lower()
 
     if tag == 'br':
-        para.add_run('\n')
+        # Use a real Word line-break element so "print to PDF" renders correctly
+        try:
+            from docx.oxml import OxmlElement as _ILE
+            _br_run = para.add_run()
+            _br_run._element.append(_ILE('w:br'))
+        except Exception:
+            para.add_run('\n')
         return
 
     # Accumulate semantic formatting flags
@@ -1014,7 +1032,7 @@ def _add_inline_to_para(para, node, bold=False, italic=False,
 
     for child in node.children:
         _add_inline_to_para(para, child, _bold, _italic, _underline, _strike,
-                            _color, _font_size)
+                            _color, _font_size, default_color, default_font_size_pt)
 
 
 def _html_to_docx_body(doc, html_content):
@@ -1054,14 +1072,16 @@ def _add_block_element(doc, element, left_indent=None):
         classes = classes.split()
 
     # ── Headings ────────────────────────────────────────────────────────────
-    # PDF CSS: h1-h6 { margin: 1.2em 0 0.4em }
+    # Spacing matches PDF CSS exactly (see _generate_pdf_html):
+    #   h1 { margin: 12pt 0 5pt 0 }   h2 { margin: 10pt 0 4pt 0 }
+    #   h3 { margin:  8pt 0 3pt 0 }   h4-h6 { margin: 6pt 0 2pt 0 }
     _HEADING_SPACING = {
-        1: (Pt(17), Pt(6)),   # 1.2em × 14pt ≈ 17pt before, 0.4em × 14pt ≈ 6pt after
-        2: (Pt(14), Pt(5)),
-        3: (Pt(13), Pt(4)),
-        4: (Pt(12), Pt(4)),
-        5: (Pt(12), Pt(4)),
-        6: (Pt(12), Pt(4)),
+        1: (Pt(12), Pt(5)),
+        2: (Pt(10), Pt(4)),
+        3: (Pt(8),  Pt(3)),
+        4: (Pt(6),  Pt(2)),
+        5: (Pt(6),  Pt(2)),
+        6: (Pt(6),  Pt(2)),
     }
     if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
         level = int(tag[1])
@@ -1139,6 +1159,29 @@ def _add_block_element(doc, element, left_indent=None):
                 tblPr.append(tblW)
             tblW.set(_qn('w:w'), str(_PAGE_W_TWIPS))
             tblW.set(_qn('w:type'), 'dxa')
+            # Table borders: 0.5pt solid #374151 (matches PDF td,th { border })
+            _tblBorders = tblPr.find(_qn('w:tblBorders'))
+            if _tblBorders is None:
+                _tblBorders = _OE('w:tblBorders'); tblPr.append(_tblBorders)
+            for _side in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+                _b_el = _tblBorders.find(_qn(f'w:{_side}'))
+                if _b_el is None:
+                    _b_el = _OE(f'w:{_side}'); _tblBorders.append(_b_el)
+                _b_el.set(_qn('w:val'),   'single')
+                _b_el.set(_qn('w:sz'),    '4')       # 4 eighths = 0.5 pt
+                _b_el.set(_qn('w:space'), '0')
+                _b_el.set(_qn('w:color'), '374151')
+            # Default cell margins: 4pt top/bottom, 7pt left/right (PDF padding)
+            _tblCellMar = tblPr.find(_qn('w:tblCellMar'))
+            if _tblCellMar is None:
+                _tblCellMar = _OE('w:tblCellMar'); tblPr.append(_tblCellMar)
+            for _side, _w_twips in (('top', 80), ('left', 140),
+                                    ('bottom', 80), ('right', 140)):
+                _m_el = _tblCellMar.find(_qn(f'w:{_side}'))
+                if _m_el is None:
+                    _m_el = _OE(f'w:{_side}'); _tblCellMar.append(_m_el)
+                _m_el.set(_qn('w:w'),    str(_w_twips))
+                _m_el.set(_qn('w:type'), 'dxa')
             # Set equal column widths via cell tcW elements
             for row in tbl.rows:
                 for cell in row.cells:
@@ -1182,36 +1225,61 @@ def _add_block_element(doc, element, left_indent=None):
                                   if isinstance(c, Tag) and c.name in
                                   ('p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6')]
 
+                # PDF CSS: table { font-size: 9.5pt }; th { color: #1a2742 }
+                _cell_dfsize = 9.5
+                _cell_dfcol  = (0x1a, 0x27, 0x42) if is_header else None
+
                 if block_children:
                     para = cell.paragraphs[0]
                     for pi, blk in enumerate(block_children):
                         if pi > 0:
                             para = cell.add_paragraph()
                         for child in blk.children:
-                            _add_inline_to_para(para, child, bold=is_header)
+                            _add_inline_to_para(para, child,
+                                                bold=is_header,
+                                                default_color=_cell_dfcol,
+                                                default_font_size_pt=_cell_dfsize)
                         c_align = _get_para_align(blk)
                         if c_align is not None:
                             para.alignment = c_align
-                        if is_header:
-                            try:
-                                from docx.shared import RGBColor as _RGB
-                                for run in para.runs:
-                                    if not run.font.color.type:
-                                        run.font.color.rgb = _RGB(0x1a, 0x27, 0x42)
-                            except Exception:
-                                pass
                 else:
                     # No block wrappers — treat all children as inline content
                     para = cell.paragraphs[0]
                     for child in cell_el.children:
-                        _add_inline_to_para(para, child, bold=is_header)
+                        _add_inline_to_para(para, child,
+                                            bold=is_header,
+                                            default_color=_cell_dfcol,
+                                            default_font_size_pt=_cell_dfsize)
                     c_align = _get_para_align(cell_el)
                     if c_align is not None:
                         para.alignment = c_align
 
     # ── Blockquote — indented container ──────────────────────────────────────
+    # PDF: margin-left:20pt + padding-left:8pt = 28pt total left offset
     elif tag == 'blockquote':
-        _add_block_children(doc, element, left_indent=Inches(0.5))
+        _bq_para_start = len(doc.paragraphs)
+        _add_block_children(doc, element, left_indent=Inches(28 / 72.0))
+        # Apply left border (2pt solid #d1d5db) and colour (#6b7280)
+        try:
+            from docx.oxml.ns import qn as _bqn
+            from docx.oxml import OxmlElement as _BOE
+            from docx.shared import RGBColor as _BQRGB
+            for _bq_para in doc.paragraphs[_bq_para_start:]:
+                _pPr2 = _bq_para._element.get_or_add_pPr()
+                _pBdr = _pPr2.find(_bqn('w:pBdr'))
+                if _pBdr is None:
+                    _pBdr = _BOE('w:pBdr'); _pPr2.append(_pBdr)
+                _lft = _pBdr.find(_bqn('w:left'))
+                if _lft is None:
+                    _lft = _BOE('w:left'); _pBdr.append(_lft)
+                _lft.set(_bqn('w:val'),   'single')
+                _lft.set(_bqn('w:sz'),    '16')    # 2pt = 16 eighths
+                _lft.set(_bqn('w:space'), '4')
+                _lft.set(_bqn('w:color'), 'D1D5DB')
+                for _bq_run in _bq_para.runs:
+                    _bq_run.font.color.rgb = _BQRGB(0x6b, 0x72, 0x80)
+        except Exception:
+            pass
 
     # ── Generic containers ───────────────────────────────────────────────────
     elif tag in ('div', 'section', 'article', 'main', 'aside', 'figure'):
@@ -1248,33 +1316,70 @@ def generate_docx(contract, revision=None):
         section.bottom_margin = Inches(1)
 
     # ── Base style — matches PDF: Arial 10 pt, colour #374151 ───────────────
+    # Also set these at XML (docDefaults) level below — Word's theme fonts
+    # silently override style.font.name unless the XML default is explicit too.
     try:
+        from docx.oxml.ns import qn as _sqn
+        from docx.oxml import OxmlElement as _SOE
         normal = doc.styles['Normal']
         normal.font.name      = 'Arial'
         normal.font.size      = Pt(10)
         normal.font.color.rgb = RGBColor(0x37, 0x41, 0x51)
-        # PDF CSS: p { margin: 0.55em 0 } ≈ 5.5 pt at 10 pt font
-        normal.paragraph_format.space_before = Pt(0)
-        normal.paragraph_format.space_after  = Pt(6)
+        # PDF CSS: p { margin: 3pt 0 5pt 0 }
+        normal.paragraph_format.space_before = Pt(3)
+        normal.paragraph_format.space_after  = Pt(5)
+        # PDF CSS: line-height: 1.6  →  384 twips (240 × 1.6)
+        _n_pPr = normal.element.find(_sqn('w:pPr'))
+        if _n_pPr is None:
+            _n_pPr = _SOE('w:pPr'); normal.element.append(_n_pPr)
+        _n_sp = _n_pPr.find(_sqn('w:spacing'))
+        if _n_sp is None:
+            _n_sp = _SOE('w:spacing'); _n_pPr.append(_n_sp)
+        _n_sp.set(_sqn('w:line'), '384'); _n_sp.set(_sqn('w:lineRule'), 'auto')
     except Exception:
         pass
 
-    # ── Heading styles — match PDF CSS ───────────────────────────────────────
+    # ── Heading styles — match PDF CSS exactly ────────────────────────────────
+    # h1: 14pt #1a2742  margin:12pt 0 5pt 0
+    # h2: 12pt #1a2742  margin:10pt 0 4pt 0
+    # h3: 11pt #374151  margin: 8pt 0 3pt 0
+    # h4-h6: 10pt #374151  margin: 6pt 0 2pt 0
     _HEADING_DEFS = {
-        1: (Pt(14), RGBColor(0x1a, 0x27, 0x42)),
-        2: (Pt(12), RGBColor(0x1a, 0x27, 0x42)),
-        3: (Pt(11), RGBColor(0x37, 0x41, 0x51)),
-        4: (Pt(10), RGBColor(0x37, 0x41, 0x51)),
-        5: (Pt(10), RGBColor(0x37, 0x41, 0x51)),
-        6: (Pt(10), RGBColor(0x37, 0x41, 0x51)),
+        1: (Pt(14), RGBColor(0x1a, 0x27, 0x42), Pt(12), Pt(5)),
+        2: (Pt(12), RGBColor(0x1a, 0x27, 0x42), Pt(10), Pt(4)),
+        3: (Pt(11), RGBColor(0x37, 0x41, 0x51), Pt(8),  Pt(3)),
+        4: (Pt(10), RGBColor(0x37, 0x41, 0x51), Pt(6),  Pt(2)),
+        5: (Pt(10), RGBColor(0x37, 0x41, 0x51), Pt(6),  Pt(2)),
+        6: (Pt(10), RGBColor(0x37, 0x41, 0x51), Pt(6),  Pt(2)),
     }
-    for level, (size, color) in _HEADING_DEFS.items():
+    for level, (size, color, sb, sa) in _HEADING_DEFS.items():
         try:
+            from docx.oxml.ns import qn as _hqn
+            from docx.oxml import OxmlElement as _HOE
             h = doc.styles[f'Heading {level}']
             h.font.name      = 'Arial'
             h.font.size      = size
             h.font.color.rgb = color
             h.font.bold      = True
+            h.paragraph_format.space_before = sb
+            h.paragraph_format.space_after  = sa
+            # Remove theme-font attrs that override explicit font names
+            _h_rPr = h.element.find(_hqn('w:rPr'))
+            if _h_rPr is not None:
+                _h_rFonts = _h_rPr.find(_hqn('w:rFonts'))
+                if _h_rFonts is not None:
+                    for _ta in ('w:asciiTheme', 'w:hAnsiTheme',
+                                'w:cstheme', 'w:eastAsiaTheme'):
+                        try: del _h_rFonts.attrib[_hqn(_ta)]
+                        except KeyError: pass
+            # Line spacing 1.6× in the heading style
+            _h_pPr = h.element.find(_hqn('w:pPr'))
+            if _h_pPr is None:
+                _h_pPr = _HOE('w:pPr'); h.element.append(_h_pPr)
+            _h_sp = _h_pPr.find(_hqn('w:spacing'))
+            if _h_sp is None:
+                _h_sp = _HOE('w:spacing'); _h_pPr.append(_h_sp)
+            _h_sp.set(_hqn('w:line'), '384'); _h_sp.set(_hqn('w:lineRule'), 'auto')
         except Exception:
             pass
 
@@ -1286,6 +1391,61 @@ def generate_docx(contract, revision=None):
             s.font.size = Pt(10)
         except Exception:
             pass
+
+    # ── docDefaults: force Arial 10pt #374151 at the XML layer ───────────────
+    # This is the definitive fallback; theme fonts cannot override docDefaults.
+    try:
+        from docx.oxml.ns import qn as _dqn
+        from docx.oxml import OxmlElement as _DOE
+        _styles_el = doc.styles._element   # <w:styles> root of word/styles.xml
+        if _styles_el is not None:
+            _dd = _styles_el.find(_dqn('w:docDefaults'))
+            if _dd is None:
+                _dd = _DOE('w:docDefaults'); _styles_el.insert(0, _dd)
+            # ── Run property defaults ─────────────────────────────────────
+            _rPrDef = _dd.find(_dqn('w:rPrDefault'))
+            if _rPrDef is None:
+                _rPrDef = _DOE('w:rPrDefault'); _dd.append(_rPrDef)
+            _rPr = _rPrDef.find(_dqn('w:rPr'))
+            if _rPr is None:
+                _rPr = _DOE('w:rPr'); _rPrDef.append(_rPr)
+            # Font name (remove theme attrs, set explicit Arial)
+            _rFonts = _rPr.find(_dqn('w:rFonts'))
+            if _rFonts is None:
+                _rFonts = _DOE('w:rFonts'); _rPr.insert(0, _rFonts)
+            for _fa in ('w:ascii', 'w:hAnsi', 'w:cs', 'w:eastAsia'):
+                _rFonts.set(_dqn(_fa), 'Arial')
+            for _ta in ('w:asciiTheme', 'w:hAnsiTheme', 'w:cstheme', 'w:eastAsiaTheme'):
+                try: del _rFonts.attrib[_dqn(_ta)]
+                except KeyError: pass
+            # Font size: 10pt = 20 half-points
+            for _sz_tag in ('w:sz', 'w:szCs'):
+                _sz_el = _rPr.find(_dqn(_sz_tag))
+                if _sz_el is None:
+                    _sz_el = _DOE(_sz_tag); _rPr.append(_sz_el)
+                _sz_el.set(_dqn('w:val'), '20')
+            # Colour: #374151
+            _col_el = _rPr.find(_dqn('w:color'))
+            if _col_el is None:
+                _col_el = _DOE('w:color'); _rPr.append(_col_el)
+            _col_el.set(_dqn('w:val'), '374151')
+            # ── Paragraph property defaults ───────────────────────────────
+            _pPrDef = _dd.find(_dqn('w:pPrDefault'))
+            if _pPrDef is None:
+                _pPrDef = _DOE('w:pPrDefault'); _dd.append(_pPrDef)
+            _pPr = _pPrDef.find(_dqn('w:pPr'))
+            if _pPr is None:
+                _pPr = _DOE('w:pPr'); _pPrDef.append(_pPr)
+            _lSp = _pPr.find(_dqn('w:spacing'))
+            if _lSp is None:
+                _lSp = _DOE('w:spacing'); _pPr.append(_lSp)
+            # 1.6× line spacing; 3pt before / 5pt after to match PDF p{}
+            _lSp.set(_dqn('w:line'),     '384')   # 240 twips/line × 1.6
+            _lSp.set(_dqn('w:lineRule'), 'auto')
+            _lSp.set(_dqn('w:before'),   '60')    # 3pt
+            _lSp.set(_dqn('w:after'),    '100')   # 5pt
+    except Exception:
+        pass
 
     # ── Contract content only ────────────────────────────────────────────────
     content = ''
