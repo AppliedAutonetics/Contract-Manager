@@ -927,6 +927,7 @@ tr:hover td { background: var(--gray-50); }
   background: var(--gray-50);
   font-weight: 600;
   color: var(--primary);
+  text-align: left;   /* override browser default of center for <th> */
 }
 .docx-preview table tr:nth-child(even) td { background: #fafafa; }
 

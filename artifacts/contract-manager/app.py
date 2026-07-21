@@ -471,11 +471,21 @@ def _docx_to_html(file_path):
 
     def _table_html(table):
         # Detect header row: row 0 is a header if all its first-paragraph runs are bold
+        # AND the row contains no line-break runs (signature blocks are all-bold but
+        # span multiple lines via <w:br/>, so we exclude those).
+        _WNS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
         def _row_is_header(row):
             try:
                 for cell in row.cells:
                     if not cell.paragraphs:
                         return False
+                    # Disqualify if any paragraph in the cell has a <w:br/> run —
+                    # that means it's multi-line content (e.g. a signature block),
+                    # not a single-line column header.
+                    for para in cell.paragraphs:
+                        for r in para.runs:
+                            if r._element.find(f'{{{_WNS}}}br') is not None:
+                                return False
                     runs = [r for r in cell.paragraphs[0].runs if r.text.strip()]
                     if runs and not all(r.bold for r in runs):
                         return False
